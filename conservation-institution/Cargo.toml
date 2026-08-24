@@ -1,0 +1,20 @@
+[package]
+name = "conservation-institution"
+description = "Institution bridge for exact conservation laws and traces"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+conservation-core = { version = "0.1.0", path = "../conservation-core" }
+conservation-trace = { version = "0.1.0", path = "../conservation-trace" }
+institution = { version = "0.1.0", path = "../../institution" }
+
+[dev-dependencies]
+conservation-linear = { version = "0.1.0", path = "../conservation-linear" }
+num-bigint.workspace = true
+num-rational.workspace = true

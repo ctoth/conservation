@@ -1,0 +1,24 @@
+[workspace]
+members = [
+    "conservation-core",
+    "conservation-institution",
+    "conservation-linear",
+    "conservation-trace",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["ctoth"]
+license = "MIT"
+repository = "https://github.com/ctoth/conservation"
+readme = "README.md"
+rust-version = "1.85"
+
+[workspace.dependencies]
+num-bigint = "0.4"
+num-integer = "0.1"
+num-rational = "0.4"
+num-traits = "0.2"
+proptest = "1"

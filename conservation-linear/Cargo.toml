@@ -1,0 +1,20 @@
+[package]
+name = "conservation-linear"
+description = "Exact linear conservation-law derivation"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+conservation-core = { version = "0.1.0", path = "../conservation-core" }
+num-bigint.workspace = true
+num-integer.workspace = true
+num-rational.workspace = true
+num-traits.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
