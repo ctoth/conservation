@@ -45,18 +45,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "conservation-institution"
-version = "0.1.0"
-dependencies = [
- "conservation-core",
- "conservation-linear",
- "conservation-trace",
- "institution",
- "num-bigint",
- "num-rational",
-]
-
-[[package]]
 name = "conservation-linear"
 version = "0.1.0"
 dependencies = [
@@ -122,10 +110,6 @@ dependencies = [
  "libc",
  "r-efi 6.0.0",
 ]
-
-[[package]]
-name = "institution"
-version = "0.1.0"
 
 [[package]]
 name = "libc"
