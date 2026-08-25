@@ -140,6 +140,13 @@ impl TransitionMatrix {
     pub fn transition_count(&self) -> usize {
         self.transition_count
     }
+
+    /// Returns an exact entry by canonical row and transition column.
+    pub fn entry(&self, axis_index: usize, transition_index: usize) -> Option<&BigRational> {
+        self.entries
+            .get(axis_index)
+            .and_then(|row| row.get(transition_index))
+    }
 }
 
 /// Derives a deterministic rational vector-space basis for the left nullspace.

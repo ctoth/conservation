@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "conservation-core",
+    "conservation-dynamics",
     "conservation-linear",
     "conservation-trace",
 ]

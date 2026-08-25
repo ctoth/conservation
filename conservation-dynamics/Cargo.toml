@@ -1,19 +1,23 @@
 [package]
-name = "conservation-trace"
-description = "Exact finite-state trace checking for conservation laws"
+name = "conservation-dynamics"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-readme.workspace = true
 rust-version.workspace = true
+description = "Exact and dense settlement of compiled typed stock-flow systems"
 
 [dependencies]
-conservation-core = { version = "0.1.0", path = "../conservation-core" }
+conservation-core = { path = "../conservation-core" }
 num-rational.workspace = true
 num-traits.workspace = true
 
 [dev-dependencies]
+criterion = "0.5"
 num-bigint.workspace = true
 proptest.workspace = true
+
+[[bench]]
+name = "dense_settlement"
+harness = false

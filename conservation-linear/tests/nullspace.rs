@@ -2,6 +2,7 @@ use conservation_core::{AxisId, KindId, Provenance};
 use conservation_linear::{MatrixError, NullspaceSource, TransitionMatrix, derive_left_nullspace};
 use num_bigint::BigInt;
 use num_rational::BigRational;
+use num_traits::Zero;
 use proptest::prelude::*;
 
 fn axis(value: &str) -> AxisId {
@@ -27,6 +28,46 @@ fn closed_flow_matrix(axes: [AxisId; 3]) -> TransitionMatrix {
         })
         .collect();
     TransitionMatrix::new(axes, rows).unwrap()
+}
+
+fn rank(mut rows: Vec<Vec<BigRational>>) -> usize {
+    if rows.is_empty() {
+        return 0;
+    }
+    let columns = rows[0].len();
+    let mut pivot_row = 0;
+    for column in 0..columns {
+        let Some(candidate) = (pivot_row..rows.len()).find(|&row| !rows[row][column].is_zero())
+        else {
+            continue;
+        };
+        rows.swap(pivot_row, candidate);
+        let pivot = rows[pivot_row][column].clone();
+        for value in &mut rows[pivot_row] {
+            *value /= &pivot;
+        }
+        let normalized = rows[pivot_row].clone();
+        for (row_index, row) in rows.iter_mut().enumerate() {
+            if row_index == pivot_row || row[column].is_zero() {
+                continue;
+            }
+            let factor = row[column].clone();
+            for (value, pivot_value) in row.iter_mut().zip(&normalized) {
+                *value -= &factor * pivot_value;
+            }
+        }
+        pivot_row += 1;
+        if pivot_row == rows.len() {
+            break;
+        }
+    }
+    pivot_row
+}
+
+fn integer_matrices() -> impl Strategy<Value = Vec<Vec<i16>>> {
+    (1_usize..6, 1_usize..6).prop_flat_map(|(rows, columns)| {
+        prop::collection::vec(prop::collection::vec(-5_i16..=5, columns), rows)
+    })
 }
 
 #[test]
@@ -152,6 +193,51 @@ fn malformed_matrices_are_rejected() {
 }
 
 proptest! {
+    #[test]
+    fn every_derived_basis_is_complete_independent_and_annihilates_the_matrix(
+        raw in integer_matrices()
+    ) {
+        let axes = (0..raw.len())
+            .map(|index| axis(&format!("x{index}")))
+            .collect::<Vec<_>>();
+        let entries = raw
+            .iter()
+            .map(|row| row.iter().map(|value| q(i64::from(*value))).collect::<Vec<_>>())
+            .collect::<Vec<_>>();
+        let matrix = TransitionMatrix::new(axes.clone(), entries.clone()).unwrap();
+        let laws = derive_left_nullspace(
+            &matrix,
+            kind("amount"),
+            NullspaceSource::Stoichiometric,
+        ).unwrap();
+
+        prop_assert_eq!(laws.len(), axes.len() - rank(entries));
+        for law in &laws {
+            for transition in 0..matrix.transition_count() {
+                let total = matrix
+                    .axes()
+                    .iter()
+                    .enumerate()
+                    .map(|(row, axis)| {
+                        law.coefficient(axis) * matrix.entry(row, transition).unwrap()
+                    })
+                    .sum::<BigRational>();
+                prop_assert!(total.is_zero());
+            }
+        }
+        let basis_rows = laws
+            .iter()
+            .map(|law| {
+                matrix
+                    .axes()
+                    .iter()
+                    .map(|axis| law.coefficient(axis).clone())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        prop_assert_eq!(rank(basis_rows), laws.len());
+    }
+
     #[test]
     fn scaling_a_closed_flow_network_preserves_the_same_canonical_law(scale in 1_i64..10_000) {
         let axes = [axis("A"), axis("B"), axis("C")];
