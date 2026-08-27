@@ -392,6 +392,7 @@ fn empty_trace_is_structural_and_misrouting_reports_first_canonical_axis() {
 fn flow_and_boundary_checkers_return_typed_first_offense_evidence() {
     let good = trace_with([10, 3]);
     let ratio = LinearFlowConstraint::new(
+        good.carrier(),
         sentence("partition"),
         kind(),
         [(flow("f1"), q(1)), (flow("f2"), q(-2))],
@@ -594,6 +595,7 @@ fn suite_retains_every_named_typed_outcome_in_canonical_order() {
     let suite = StockFlowLawSuite::new(
         Some(TransitionEquation::new(sentence("d-transition"))),
         [LinearFlowConstraint::new(
+            &carrier,
             sentence("a-partition"),
             kind(),
             [(flow("f1"), q(1)), (flow("f2"), q(-2))],

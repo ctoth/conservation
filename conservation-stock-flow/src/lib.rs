@@ -1343,8 +1343,9 @@ pub struct LinearFlowConstraint {
 }
 
 impl LinearFlowConstraint {
-    /// Canonicalizes repeated terms and rejects a vacuous left-hand side.
+    /// Canonicalizes terms and validates every referenced channel against a carrier.
     pub fn new(
+        carrier: &StockFlowCarrier,
         id: SentenceId,
         kind: KindId,
         coefficients: impl IntoIterator<Item = (FlowId, BigRational)>,
@@ -1358,23 +1359,12 @@ impl LinearFlowConstraint {
         if canonical.is_empty() {
             return Err(StockFlowError::EmptyConstraint);
         }
-        Ok(Self {
+        let sentence = Self {
             id,
             kind,
             coefficients: canonical,
             expected,
-        })
-    }
-
-    /// Constructs a sentence and immediately validates every channel against a carrier.
-    pub fn new_checked(
-        carrier: &StockFlowCarrier,
-        id: SentenceId,
-        kind: KindId,
-        coefficients: impl IntoIterator<Item = (FlowId, BigRational)>,
-        expected: BigRational,
-    ) -> Result<Self, StockFlowError> {
-        let sentence = Self::new(id, kind, coefficients, expected)?;
+        };
         sentence.validate(carrier)?;
         Ok(sentence)
     }
