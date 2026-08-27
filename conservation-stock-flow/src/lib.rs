@@ -1520,6 +1520,8 @@ pub struct BoundaryWitness {
     pub sentence: SentenceId,
     /// Ledger checked.
     pub ledger: LedgerId,
+    /// Carrier-authoritative ledger axis checked.
+    pub ledger_axis: AxisId,
     /// Canonical mapped ports.
     pub boundaries: Vec<BoundaryId>,
     /// Number of transitions checked.
@@ -1535,6 +1537,8 @@ pub struct BoundaryViolation {
     pub transition: usize,
     /// Ledger whose increment was checked.
     pub ledger: LedgerId,
+    /// Carrier-authoritative ledger axis checked.
+    pub ledger_axis: AxisId,
     /// Canonical mapped ports.
     pub boundaries: Vec<BoundaryId>,
     /// Exact observed ledger increment.
@@ -1580,6 +1584,7 @@ pub fn check_boundary_correspondence(
                 sentence: sentence.id.clone(),
                 transition,
                 ledger: sentence.ledger.clone(),
+                ledger_axis: ledger.axis.clone(),
                 boundaries,
                 observed_increment,
                 settled_total,
@@ -1589,6 +1594,7 @@ pub fn check_boundary_correspondence(
     Ok(BoundaryVerdict::Satisfied(BoundaryWitness {
         sentence: sentence.id.clone(),
         ledger: sentence.ledger.clone(),
+        ledger_axis: ledger.axis.clone(),
         boundaries,
         transitions_checked: trace.records.len(),
     }))
