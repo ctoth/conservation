@@ -3,6 +3,7 @@ members = [
     "conservation-core",
     "conservation-dynamics",
     "conservation-linear",
+    "conservation-stock-flow",
     "conservation-trace",
 ]
 resolver = "3"

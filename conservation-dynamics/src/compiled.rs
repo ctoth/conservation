@@ -637,14 +637,24 @@ fn compute_dense_batch(
     }
 
     scratch.next_amounts.clear();
-    for ((available, outgoing), incoming) in amounts
+    for (stock, ((available, outgoing), incoming)) in amounts
         .iter()
         .zip(&mut scratch.outgoing_terms)
         .zip(&mut scratch.incoming_terms)
+        .enumerate()
     {
+        let outgoing = sum_dense_terms(outgoing);
+        let remaining = if scratch.scales[stock] < 1.0 {
+            // A source-limited group consumes the available stock exactly.
+            // Reusing `available - sum(request * scale)` would leave a
+            // model-scale-dependent binary64 cancellation residue.
+            0.0
+        } else {
+            *available - outgoing
+        };
         scratch
             .next_amounts
-            .push(*available - sum_dense_terms(outgoing) + sum_dense_terms(incoming));
+            .push(remaining + sum_dense_terms(incoming));
     }
     sums_into(&mut scratch.input_terms, &mut scratch.batch_inputs);
     sums_into(&mut scratch.output_terms, &mut scratch.batch_outputs);

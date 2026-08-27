@@ -22,7 +22,8 @@ pub enum NullspaceSource {
 }
 
 impl NullspaceSource {
-    fn provenance(self) -> Provenance {
+    /// Returns the law provenance implied by this matrix interpretation.
+    pub fn provenance(self) -> Provenance {
         match self {
             Self::Incidence => Provenance::IncidenceNullspace,
             Self::Stoichiometric => Provenance::StoichiometricNullspace,
@@ -128,6 +129,30 @@ impl TransitionMatrix {
             axes,
             entries,
             transition_count,
+        })
+    }
+
+    /// Constructs a matrix with validated axis rows and zero transition columns.
+    ///
+    /// This represents a stock system with no internal flows. [`Self::new`]
+    /// retains its stricter historical contract and rejects empty columns.
+    pub fn empty(axes: impl IntoIterator<Item = AxisId>) -> Result<Self, MatrixError> {
+        let mut axes = axes.into_iter().collect::<Vec<_>>();
+        if axes.is_empty() {
+            return Err(MatrixError::NoAxes);
+        }
+        let mut unique = BTreeSet::new();
+        for axis in &axes {
+            if !unique.insert(axis) {
+                return Err(MatrixError::DuplicateAxis(axis.clone()));
+            }
+        }
+        axes.sort();
+        let entries = vec![Vec::new(); axes.len()];
+        Ok(Self {
+            axes,
+            entries,
+            transition_count: 0,
         })
     }
 

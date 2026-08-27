@@ -206,6 +206,12 @@ impl FlowTopology {
         self.stock_indices.get(stock).copied()
     }
 
+    /// Returns the conserved kind stored by a declared stock.
+    pub fn stock_kind_for(&self, stock: &StockId) -> Option<&KindId> {
+        self.stock_index(stock)
+            .map(|index| &self.kinds[self.stock_kinds[index]])
+    }
+
     /// Returns the stable index assigned to a conserved kind.
     pub fn kind_index(&self, kind: &KindId) -> Option<usize> {
         self.kind_indices.get(kind).copied()

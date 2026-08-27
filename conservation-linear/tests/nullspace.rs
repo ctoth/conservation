@@ -147,6 +147,20 @@ fn full_rank_matrix_has_no_conservation_law() {
 }
 
 #[test]
+fn empty_transition_matrix_has_one_canonical_law_per_axis() {
+    let a = axis("A");
+    let b = axis("B");
+    let matrix = TransitionMatrix::empty([b.clone(), a.clone()]).unwrap();
+    let laws = derive_left_nullspace(&matrix, kind("amount"), NullspaceSource::Incidence).unwrap();
+
+    assert_eq!(matrix.axes(), &[a.clone(), b.clone()]);
+    assert_eq!(matrix.transition_count(), 0);
+    assert_eq!(laws.len(), 2);
+    assert_eq!(laws[0].coefficient(&a), &q(1));
+    assert_eq!(laws[1].coefficient(&b), &q(1));
+}
+
+#[test]
 fn dependent_rows_have_a_deterministic_multivector_basis() {
     let a = axis("A");
     let b = axis("B");

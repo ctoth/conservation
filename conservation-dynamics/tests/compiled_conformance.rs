@@ -184,6 +184,25 @@ fn both_backends_limit_competing_withdrawals_proportionally() {
 }
 
 #[test]
+fn dense_source_limitation_exhausts_the_source_without_a_roundoff_residue() {
+    let topology = material_topology();
+    let mut exact = ExactState::new(topology.clone(), vec![integer(789_091), integer(0)]).unwrap();
+    let mut dense = DenseState::new(topology, vec![789_091.0, 0.0]).unwrap();
+    let requested_exact = [integer(0), integer(719_946), integer(302_488)];
+    let requested_dense = [0.0, 719_946.0, 302_488.0];
+
+    exact.settle(&requested_exact).unwrap();
+    dense.settle(&requested_dense).unwrap();
+
+    assert!(exact.amounts()[0].is_zero());
+    assert_eq!(dense.amounts()[0], 0.0);
+    assert!(
+        DenseTolerance::default()
+            .contains(exact.amounts()[1].to_f64().unwrap(), dense.amounts()[1])
+    );
+}
+
+#[test]
 fn invalid_compiled_batches_are_atomic_in_both_backends() {
     let topology = material_topology();
     let mut exact = ExactState::new(topology.clone(), vec![integer(10), integer(0)]).unwrap();

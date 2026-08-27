@@ -154,6 +154,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "conservation-stock-flow"
+version = "0.1.0"
+dependencies = [
+ "conservation-core",
+ "conservation-dynamics",
+ "conservation-linear",
+ "conservation-trace",
+ "num-bigint",
+ "num-rational",
+ "num-traits",
+ "proptest",
+]
+
+[[package]]
 name = "conservation-trace"
 version = "0.1.0"
 dependencies = [
