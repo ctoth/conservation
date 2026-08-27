@@ -6,9 +6,9 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
-use conservation_core::{AxisId, BalanceLaw, KindId};
+use conservation_core::{AxisId, BalanceLaw, Grade, GradedLaw, KindId};
 use num_rational::BigRational;
-use num_traits::Zero;
+use num_traits::{Signed, Zero};
 
 /// One exact state in a finite trace.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -153,6 +153,152 @@ pub fn check_trace(law: &BalanceLaw, states: &[TraceState]) -> Result<TraceVerdi
         conserved_value: expected,
         kind: law.kind().clone(),
     }))
+}
+
+/// Positive evidence that a form stayed nonnegative at every checked state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NonnegativeWitness {
+    /// Number of states checked, always at least two.
+    pub states_checked: usize,
+    /// Smallest exact form value observed, which is at least zero.
+    pub minimum: BigRational,
+    /// Kind checked by the law.
+    pub kind: KindId,
+}
+
+/// Positive evidence that a form never decreased between consecutive states.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NondecreasingWitness {
+    /// Number of states checked, always at least two.
+    pub states_checked: usize,
+    /// Exact form value at the initial state.
+    pub initial: BigRational,
+    /// Exact form value at the final state, at least `initial`.
+    pub last: BigRational,
+    /// Kind checked by the law.
+    pub kind: KindId,
+}
+
+/// Positive evidence that a structurally valid trace satisfies a graded law.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LawWitness {
+    /// Every state has the same exact form value.
+    Invariant(TraceWitness),
+    /// Every state's form value is at least zero.
+    Nonnegative(NonnegativeWitness),
+    /// No consecutive pair of states decreases the form value.
+    Nondecreasing(NondecreasingWitness),
+}
+
+/// Semantic evidence that a structurally valid trace violates a graded law.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LawViolation {
+    /// A state's form value differed from the initial state's.
+    Invariant(ViolatedBalance),
+    /// A state's form value was negative.
+    Negative {
+        /// Index of the first state with a negative form value.
+        state_index: usize,
+        /// Exact negative value observed there.
+        observed: BigRational,
+    },
+    /// A state's form value was below the previous state's.
+    Decrease {
+        /// Index of the first state below its predecessor.
+        state_index: usize,
+        /// Exact form value at the preceding state.
+        previous: BigRational,
+        /// Exact smaller value observed at `state_index`.
+        observed: BigRational,
+    },
+}
+
+/// The semantic outcome of checking a structurally valid trace against a graded law.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LawVerdict {
+    /// The trace satisfies the law under its grade.
+    Satisfied(LawWitness),
+    /// The trace violates the law under its grade.
+    Violated(LawViolation),
+}
+
+/// Checks a finite trace against a graded law using exact rational arithmetic.
+///
+/// All grades share [`check_trace`]'s structural contract: at least two states,
+/// and every state carries every law axis. The first offending state is
+/// reported for every grade.
+pub fn check_law(law: &GradedLaw, states: &[TraceState]) -> Result<LawVerdict, TraceError> {
+    if states.len() < 2 {
+        return Err(TraceError::TooShort {
+            states: states.len(),
+        });
+    }
+
+    match law.grade() {
+        Grade::Invariant => Ok(match check_trace(law.form(), states)? {
+            TraceVerdict::Satisfied(witness) => {
+                LawVerdict::Satisfied(LawWitness::Invariant(witness))
+            }
+            TraceVerdict::Violated(violation) => {
+                LawVerdict::Violated(LawViolation::Invariant(violation))
+            }
+        }),
+        Grade::Nonnegative => check_nonnegative(law.form(), states),
+        Grade::Nondecreasing => check_nondecreasing(law.form(), states),
+    }
+}
+
+fn check_nonnegative(form: &BalanceLaw, states: &[TraceState]) -> Result<LawVerdict, TraceError> {
+    let mut minimum = evaluate(form, &states[0], 0)?;
+    if minimum.is_negative() {
+        return Ok(LawVerdict::Violated(LawViolation::Negative {
+            state_index: 0,
+            observed: minimum,
+        }));
+    }
+    for (state_index, state) in states.iter().enumerate().skip(1) {
+        let observed = evaluate(form, state, state_index)?;
+        if observed.is_negative() {
+            return Ok(LawVerdict::Violated(LawViolation::Negative {
+                state_index,
+                observed,
+            }));
+        }
+        if observed < minimum {
+            minimum = observed;
+        }
+    }
+    Ok(LawVerdict::Satisfied(LawWitness::Nonnegative(
+        NonnegativeWitness {
+            states_checked: states.len(),
+            minimum,
+            kind: form.kind().clone(),
+        },
+    )))
+}
+
+fn check_nondecreasing(form: &BalanceLaw, states: &[TraceState]) -> Result<LawVerdict, TraceError> {
+    let initial = evaluate(form, &states[0], 0)?;
+    let mut previous = initial.clone();
+    for (state_index, state) in states.iter().enumerate().skip(1) {
+        let observed = evaluate(form, state, state_index)?;
+        if observed < previous {
+            return Ok(LawVerdict::Violated(LawViolation::Decrease {
+                state_index,
+                previous,
+                observed,
+            }));
+        }
+        previous = observed;
+    }
+    Ok(LawVerdict::Satisfied(LawWitness::Nondecreasing(
+        NondecreasingWitness {
+            states_checked: states.len(),
+            initial,
+            last: previous,
+            kind: form.kind().clone(),
+        },
+    )))
 }
 
 fn evaluate(

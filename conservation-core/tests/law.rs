@@ -1,4 +1,6 @@
-use conservation_core::{AxisId, BalanceLaw, BalanceLawError, IdentifierError, KindId, Provenance};
+use conservation_core::{
+    AxisId, BalanceLaw, BalanceLawError, Grade, GradedLaw, IdentifierError, KindId, Provenance,
+};
 use num_bigint::BigInt;
 use num_rational::BigRational;
 
@@ -62,6 +64,34 @@ fn balance_law_rejects_empty_and_fully_cancelled_coefficients() {
         ),
         Err(BalanceLawError::Empty)
     );
+}
+
+#[test]
+fn graded_law_keeps_its_form_and_grade() {
+    let form = BalanceLaw::new(
+        kind("energy"),
+        [(axis("reservoir"), q(1)), (axis("dissipated"), q(1))],
+        Provenance::Declared,
+    )
+    .unwrap();
+
+    let sentence = GradedLaw::new(form.clone(), Grade::Nondecreasing);
+    assert_eq!(sentence.form(), &form);
+    assert_eq!(sentence.grade(), Grade::Nondecreasing);
+
+    let lifted = GradedLaw::from(form.clone());
+    assert_eq!(lifted.form(), &form);
+    assert_eq!(lifted.grade(), Grade::Invariant);
+    assert_ne!(lifted, sentence);
+}
+
+#[test]
+fn grades_are_distinct_and_named() {
+    assert_ne!(Grade::Invariant, Grade::Nonnegative);
+    assert_ne!(Grade::Nonnegative, Grade::Nondecreasing);
+    assert_eq!(Grade::Invariant.to_string(), "invariant");
+    assert_eq!(Grade::Nonnegative.to_string(), "nonnegative");
+    assert_eq!(Grade::Nondecreasing.to_string(), "nondecreasing");
 }
 
 #[test]

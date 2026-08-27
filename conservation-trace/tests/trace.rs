@@ -1,6 +1,7 @@
-use conservation_core::{AxisId, BalanceLaw, KindId, Provenance};
+use conservation_core::{AxisId, BalanceLaw, Grade, GradedLaw, KindId, Provenance};
 use conservation_trace::{
-    TraceError, TraceState, TraceStateError, TraceVerdict, ViolatedBalance, check_trace,
+    LawVerdict, LawViolation, LawWitness, NondecreasingWitness, NonnegativeWitness, TraceError,
+    TraceState, TraceStateError, TraceVerdict, ViolatedBalance, check_law, check_trace,
 };
 use num_bigint::BigInt;
 use num_rational::BigRational;
@@ -121,6 +122,153 @@ fn a_missing_law_axis_is_a_structural_error() {
             axis: axis("B"),
         })
     );
+}
+
+fn states(values: &[(i64, i64)]) -> Vec<TraceState> {
+    let a = axis("A");
+    let b = axis("B");
+    values
+        .iter()
+        .map(|(left, right)| {
+            TraceState::new([(a.clone(), q(*left)), (b.clone(), q(*right))]).unwrap()
+        })
+        .collect()
+}
+
+#[test]
+fn invariant_grade_agrees_with_check_trace_in_both_outcomes() {
+    let a = axis("A");
+    let b = axis("B");
+    let law = GradedLaw::from(total_law(&a, &b));
+
+    let conserved = states(&[(3, 2), (2, 3), (1, 4)]);
+    let LawVerdict::Satisfied(LawWitness::Invariant(witness)) =
+        check_law(&law, &conserved).unwrap()
+    else {
+        panic!("expected an invariant witness");
+    };
+    assert_eq!(witness.states_checked, 3);
+    assert_eq!(witness.conserved_value, q(5));
+
+    let corrupted = states(&[(3, 2), (2, 3), (1, 3)]);
+    assert_eq!(
+        check_law(&law, &corrupted),
+        Ok(LawVerdict::Violated(LawViolation::Invariant(
+            ViolatedBalance {
+                state_index: 2,
+                expected: q(5),
+                observed: q(4),
+            }
+        )))
+    );
+}
+
+#[test]
+fn nonnegative_grade_admits_zero_and_reports_the_first_negative_state() {
+    let a = axis("A");
+    let law = GradedLaw::new(
+        BalanceLaw::new(kind("amount"), [(a.clone(), q(1))], Provenance::Declared).unwrap(),
+        Grade::Nonnegative,
+    );
+
+    let touching_zero = states(&[(2, 0), (0, 0), (5, 0)]);
+    let LawVerdict::Satisfied(LawWitness::Nonnegative(witness)) =
+        check_law(&law, &touching_zero).unwrap()
+    else {
+        panic!("expected a nonnegative witness");
+    };
+    assert_eq!(
+        witness,
+        NonnegativeWitness {
+            states_checked: 3,
+            minimum: q(0),
+            kind: kind("amount"),
+        }
+    );
+
+    let dipping = states(&[(2, 0), (-1, 0), (-3, 0)]);
+    assert_eq!(
+        check_law(&law, &dipping),
+        Ok(LawVerdict::Violated(LawViolation::Negative {
+            state_index: 1,
+            observed: q(-1),
+        }))
+    );
+
+    let starting_negative = states(&[(-4, 0), (1, 0)]);
+    assert_eq!(
+        check_law(&law, &starting_negative),
+        Ok(LawVerdict::Violated(LawViolation::Negative {
+            state_index: 0,
+            observed: q(-4),
+        }))
+    );
+}
+
+#[test]
+fn nondecreasing_grade_admits_plateaus_and_reports_the_first_decrease() {
+    let a = axis("A");
+    let law = GradedLaw::new(
+        BalanceLaw::new(kind("entropy"), [(a.clone(), q(1))], Provenance::Declared).unwrap(),
+        Grade::Nondecreasing,
+    );
+
+    let plateau = states(&[(1, 0), (1, 0), (4, 0)]);
+    let LawVerdict::Satisfied(LawWitness::Nondecreasing(witness)) =
+        check_law(&law, &plateau).unwrap()
+    else {
+        panic!("expected a nondecreasing witness");
+    };
+    assert_eq!(
+        witness,
+        NondecreasingWitness {
+            states_checked: 3,
+            initial: q(1),
+            last: q(4),
+            kind: kind("entropy"),
+        }
+    );
+
+    let dipping = states(&[(1, 0), (5, 0), (3, 0), (0, 0)]);
+    assert_eq!(
+        check_law(&law, &dipping),
+        Ok(LawVerdict::Violated(LawViolation::Decrease {
+            state_index: 2,
+            previous: q(5),
+            observed: q(3),
+        }))
+    );
+}
+
+#[test]
+fn graded_checking_shares_the_structural_trace_contract() {
+    let a = axis("A");
+    let b = axis("B");
+    let form = total_law(&a, &b);
+
+    for grade in [Grade::Invariant, Grade::Nonnegative, Grade::Nondecreasing] {
+        let law = GradedLaw::new(form.clone(), grade);
+        assert_eq!(
+            check_law(&law, &[]),
+            Err(TraceError::TooShort { states: 0 })
+        );
+        assert_eq!(
+            check_law(&law, &states(&[(1, 1)])),
+            Err(TraceError::TooShort { states: 1 })
+        );
+
+        let missing = vec![
+            TraceState::new([(a.clone(), q(1)), (b.clone(), q(1))]).unwrap(),
+            TraceState::new([(a.clone(), q(2))]).unwrap(),
+        ];
+        assert_eq!(
+            check_law(&law, &missing),
+            Err(TraceError::MissingAxis {
+                state_index: 1,
+                axis: b.clone(),
+            })
+        );
+    }
 }
 
 proptest! {

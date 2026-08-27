@@ -169,3 +169,64 @@ impl BalanceLaw {
         &self.provenance
     }
 }
+
+/// How a graded sentence reads its exact linear form along a finite trace.
+///
+/// Every grade interprets the same canonical carrier, a [`BalanceLaw`], so
+/// sentence translation is identical for all grades: rename the form, keep the
+/// grade. Only satisfaction differs.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum Grade {
+    /// The form's value is identical in every state.
+    Invariant,
+    /// The form's value is at least zero in every state.
+    Nonnegative,
+    /// The form's value never decreases between consecutive states.
+    Nondecreasing,
+}
+
+impl fmt::Display for Grade {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Invariant => "invariant",
+            Self::Nonnegative => "nonnegative",
+            Self::Nondecreasing => "nondecreasing",
+        })
+    }
+}
+
+/// A graded sentence: one exact linear form read under one grade.
+///
+/// [`Grade::Invariant`] recovers the classic balance sentence. The other
+/// grades reuse the same form as an inequality along the trace: sign and
+/// authority constraints are [`Grade::Nonnegative`] sentences, and monotone
+/// dissipation axes are [`Grade::Nondecreasing`] sentences.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GradedLaw {
+    form: BalanceLaw,
+    grade: Grade,
+}
+
+impl GradedLaw {
+    /// Constructs a graded sentence over an already-canonical form.
+    pub fn new(form: BalanceLaw, grade: Grade) -> Self {
+        Self { form, grade }
+    }
+
+    /// Returns the exact linear form this sentence reads.
+    pub fn form(&self) -> &BalanceLaw {
+        &self.form
+    }
+
+    /// Returns how the form is read along a trace.
+    pub fn grade(&self) -> Grade {
+        self.grade
+    }
+}
+
+impl From<BalanceLaw> for GradedLaw {
+    /// Reads a balance law under its classic grade, [`Grade::Invariant`].
+    fn from(form: BalanceLaw) -> Self {
+        Self::new(form, Grade::Invariant)
+    }
+}
