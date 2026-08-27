@@ -4,7 +4,6 @@ use conservation_core::{AxisId, BalanceLaw, Grade, GradedLaw, KindId, Provenance
 use conservation_dynamics::{
     ExactState, FlowSpec, FlowTopology, ProcessId, StockDefinition, StockId,
 };
-use conservation_linear::NullspaceSource;
 use conservation_stock_flow::{
     BoundaryCorrespondence, BoundaryId, BoundaryVerdict, ChannelId, ExactAmounts,
     FlowConstraintVerdict, FlowId, GradedStateLaw, LedgerDefinition, LedgerId,
@@ -509,51 +508,25 @@ fn signed_projection_reuses_existing_graded_false_semantics() {
 }
 
 #[test]
-fn checked_certificates_recompute_nullspace_and_separate_provenance() {
+fn checked_certificates_recompute_nullspace_and_seal_incidence_provenance() {
     let carrier = carrier(false);
     assert!(matches!(
-        certify_nullspace(
-            &carrier,
-            kind(),
-            [(axis("A"), q(1))],
-            NullspaceSource::Stoichiometric,
-        ),
+        certify_nullspace(&carrier, kind(), [(axis("A"), q(1))],),
         Err(StockFlowError::NonNullCertificate { .. })
     ));
     assert!(matches!(
-        certify_nullspace(
-            &carrier,
-            kind(),
-            [(axis("A"), q(1)), (axis("A"), q(-1))],
-            NullspaceSource::Stoichiometric,
-        ),
+        certify_nullspace(&carrier, kind(), [(axis("A"), q(1)), (axis("A"), q(-1))],),
         Err(StockFlowError::BalanceLaw(_))
     ));
 
-    let stoichiometric = certify_nullspace(
-        &carrier,
-        kind(),
-        [(axis("A"), q(1)), (axis("B"), q(1))],
-        NullspaceSource::Stoichiometric,
-    )
-    .unwrap();
-    let incidence = certify_nullspace(
-        &carrier,
-        kind(),
-        [(axis("A"), q(1)), (axis("B"), q(1))],
-        NullspaceSource::Incidence,
-    )
-    .unwrap();
-    assert_eq!(
-        stoichiometric.law().provenance(),
-        &Provenance::StoichiometricNullspace
-    );
+    let incidence =
+        certify_nullspace(&carrier, kind(), [(axis("A"), q(1)), (axis("B"), q(1))]).unwrap();
     assert_eq!(
         incidence.law().provenance(),
         &Provenance::IncidenceNullspace
     );
     assert!(
-        stoichiometric
+        incidence
             .annihilation()
             .values()
             .all(num_traits::Zero::is_zero)
@@ -563,7 +536,7 @@ fn checked_certificates_recompute_nullspace_and_separate_provenance() {
 #[test]
 fn basis_has_rows_minus_rank_members_and_direct_open_balance_is_semantic() {
     let carrier = carrier(false);
-    let basis = derive_nullspace_basis(&carrier, kind(), NullspaceSource::Incidence).unwrap();
+    let basis = derive_nullspace_basis(&carrier, kind()).unwrap();
     assert_eq!(basis.len(), 1); // two rows minus rank one
     assert_eq!(basis[0].law().coefficient(&axis("A")), &q(1));
     assert_eq!(basis[0].law().coefficient(&axis("B")), &q(1));
@@ -588,13 +561,8 @@ fn basis_has_rows_minus_rank_members_and_direct_open_balance_is_semantic() {
 #[test]
 fn checked_open_balance_projects_to_existing_graded_invariant() {
     let carrier = carrier(false);
-    let certificate = certify_nullspace(
-        &carrier,
-        kind(),
-        [(axis("A"), q(1)), (axis("B"), q(1))],
-        NullspaceSource::Incidence,
-    )
-    .unwrap();
+    let certificate =
+        certify_nullspace(&carrier, kind(), [(axis("A"), q(1)), (axis("B"), q(1))]).unwrap();
     let projected = certificate
         .graded_invariant(&carrier, [ledger("input-ledger"), ledger("output-ledger")])
         .unwrap();
@@ -621,13 +589,8 @@ fn checked_open_balance_projects_to_existing_graded_invariant() {
 #[test]
 fn suite_retains_every_named_typed_outcome_in_canonical_order() {
     let carrier = carrier(false);
-    let certificate = certify_nullspace(
-        &carrier,
-        kind(),
-        [(axis("A"), q(1)), (axis("B"), q(1))],
-        NullspaceSource::Incidence,
-    )
-    .unwrap();
+    let certificate =
+        certify_nullspace(&carrier, kind(), [(axis("A"), q(1)), (axis("B"), q(1))]).unwrap();
     let suite = StockFlowLawSuite::new(
         Some(TransitionEquation::new(sentence("d-transition"))),
         [LinearFlowConstraint::new(
@@ -690,11 +653,7 @@ proptest! {
             &TransitionEquation::new(sentence("transition")),
             &trace,
         ).unwrap().is_satisfied());
-        for certificate in derive_nullspace_basis(
-            &carrier,
-            kind(),
-            NullspaceSource::Incidence,
-        ).unwrap() {
+        for certificate in derive_nullspace_basis(&carrier, kind()).unwrap() {
             prop_assert!(check_open_balance(
                 &certificate.open_balance(sentence("derived")),
                 &trace,

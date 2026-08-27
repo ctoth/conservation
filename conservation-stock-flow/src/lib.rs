@@ -1766,8 +1766,8 @@ pub fn certify_nullspace(
     carrier: &StockFlowCarrier,
     kind: KindId,
     coefficients: impl IntoIterator<Item = (AxisId, BigRational)>,
-    source: NullspaceSource,
 ) -> Result<CheckedNullspace, StockFlowError> {
+    let source = NullspaceSource::Incidence;
     let coefficients = coefficients.into_iter().collect::<Vec<_>>();
     for (axis, _) in &coefficients {
         let Some(actual) = carrier.internal_effects().axis_kind(axis) else {
@@ -1834,7 +1834,6 @@ pub fn certify_nullspace(
 pub fn derive_nullspace_basis(
     carrier: &StockFlowCarrier,
     kind: KindId,
-    source: NullspaceSource,
 ) -> Result<Vec<CheckedNullspace>, StockFlowError> {
     let axes = carrier
         .internal_effects()
@@ -1871,7 +1870,7 @@ pub fn derive_nullspace_basis(
             .collect();
         TransitionMatrix::new(axes, rows)?
     };
-    derive_left_nullspace(&matrix, kind.clone(), source)?
+    derive_left_nullspace(&matrix, kind.clone(), NullspaceSource::Incidence)?
         .into_iter()
         .map(|law| {
             certify_nullspace(
@@ -1879,7 +1878,6 @@ pub fn derive_nullspace_basis(
                 kind.clone(),
                 law.coefficients()
                     .map(|(axis, coefficient)| (axis.clone(), coefficient.clone())),
-                source,
             )
         })
         .collect()
