@@ -1366,6 +1366,19 @@ impl LinearFlowConstraint {
         })
     }
 
+    /// Constructs a sentence and immediately validates every channel against a carrier.
+    pub fn new_checked(
+        carrier: &StockFlowCarrier,
+        id: SentenceId,
+        kind: KindId,
+        coefficients: impl IntoIterator<Item = (FlowId, BigRational)>,
+        expected: BigRational,
+    ) -> Result<Self, StockFlowError> {
+        let sentence = Self::new(id, kind, coefficients, expected)?;
+        sentence.validate(carrier)?;
+        Ok(sentence)
+    }
+
     /// Stable sentence identifier.
     pub fn id(&self) -> &SentenceId {
         &self.id
