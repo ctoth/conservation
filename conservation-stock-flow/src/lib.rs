@@ -1671,6 +1671,11 @@ pub struct CheckedNullspace {
 }
 
 impl CheckedNullspace {
+    /// Exact carrier identity under which this evidence was certified.
+    pub fn carrier_identity(&self) -> &CarrierIdentity {
+        &self.carrier
+    }
+
     /// Checked canonical linear form.
     pub fn law(&self) -> &BalanceLaw {
         &self.law
