@@ -43,6 +43,7 @@ struct StockState {
 
 #[derive(Clone, Debug, Default)]
 struct State {
+    model: Model,
     revision: u64,
     stocks: BTreeMap<String, StockState>,
     retired: BTreeSet<String>,
@@ -78,8 +79,7 @@ pub struct Prepared {
 #[derive(Debug)]
 pub struct Engine {
     lineage: Arc<()>,
-    model: Model,
-    laws: BTreeMap<String, usize>,
+    initial_model: Model,
     state: Arc<State>,
 }
 
@@ -87,17 +87,14 @@ impl Engine {
     pub fn new(mut model: Model) -> Result<Self, Error> {
         model.validate()?;
         model.laws.sort_by(|a, b| a.id.cmp(&b.id));
-        let laws = model
-            .laws
-            .iter()
-            .enumerate()
-            .map(|(index, law)| (law.id.clone(), index))
-            .collect();
+        let state = State {
+            model: model.clone(),
+            ..State::default()
+        };
         Ok(Self {
             lineage: Arc::new(()),
-            model,
-            laws,
-            state: Arc::new(State::default()),
+            initial_model: model,
+            state: Arc::new(state),
         })
     }
 
@@ -138,7 +135,7 @@ impl Engine {
         mut writes: Vec<RecordWrite>,
         facts: BTreeMap<String, Quantity>,
     ) -> Result<Participation, Error> {
-        self.model.owner(owner)?;
+        self.model_for(exchange)?.owner(owner)?;
         let exchange = self.canonical(exchange.clone())?;
         writes.sort_by(|a, b| a.key.cmp(&b.key));
         for write in &writes {
@@ -247,8 +244,8 @@ impl Engine {
     /// Preparations are intentionally absent; restoring creates a new handle lineage.
     pub fn snapshot(&self) -> Result<Vec<u8>, Error> {
         let snapshot = Snapshot {
-            version: 1,
-            model: self.model.clone(),
+            version: 2,
+            model: self.initial_model.clone(),
             requests: self
                 .state
                 .commits
@@ -263,7 +260,7 @@ impl Engine {
     pub fn restore(bytes: &[u8]) -> Result<Self, Error> {
         let snapshot: Snapshot =
             serde_json::from_slice(bytes).map_err(|error| Error::Snapshot(error.to_string()))?;
-        if snapshot.version != 1 {
+        if snapshot.version != 2 {
             return Err(Error::Snapshot(format!(
                 "unsupported version {}",
                 snapshot.version
@@ -287,16 +284,28 @@ impl Engine {
         Ok(engine)
     }
 
-    fn law(&self, id: &str) -> Result<&Law, Error> {
-        self.laws
-            .get(id)
-            .map(|index| &self.model.laws[*index])
+    fn model_for(&self, exchange: &Exchange) -> Result<Model, Error> {
+        match &exchange.declarations {
+            Some(declarations) => self.state.model.extended(declarations),
+            None => Ok(self.state.model.clone()),
+        }
+    }
+
+    fn law<'a>(model: &'a Model, id: &str) -> Result<&'a Law, Error> {
+        model
+            .laws
+            .iter()
+            .find(|law| law.id == id)
             .ok_or_else(|| invalid(format!("unknown law {id}")))
     }
 
     fn canonical(&self, mut exchange: Exchange) -> Result<Exchange, Error> {
         identifier(&exchange.id)?;
-        let law = self.law(&exchange.law)?;
+        if let Some(declarations) = &mut exchange.declarations {
+            declarations.laws.sort_by(|a, b| a.id.cmp(&b.id));
+        }
+        let model = self.model_for(&exchange)?;
+        let law = Self::law(&model, &exchange.law)?;
         if exchange.bindings.keys().ne(law.slots.keys()) {
             return Err(invalid("bindings must exactly match law slots"));
         }
@@ -344,7 +353,7 @@ impl Engine {
             return Err(invalid("duplicate stock creation"));
         }
         for stock in &exchange.creates {
-            self.model.stock(stock)?;
+            model.stock(stock)?;
             if !stocks.contains(&stock.id) {
                 return Err(invalid("created stock must have a law slot"));
             }
@@ -377,7 +386,8 @@ impl Engine {
 
     fn transition(&self, request: &Request) -> Result<(State, Receipt), Error> {
         let exchange = &request.exchange;
-        let law = self.law(&exchange.law)?;
+        let model = self.model_for(exchange)?;
+        let law = Self::law(&model, &exchange.law)?;
         let present: BTreeSet<_> = request
             .contributions
             .iter()
@@ -467,7 +477,7 @@ impl Engine {
                 .ok_or_else(|| invalid(format!("unknown stock {id}")))?;
             stock.definition.owner = placement.owner.clone();
             stock.definition.capacities = placement.capacities.clone();
-            self.model.stock(&stock.definition)?;
+            model.stock(&stock.definition)?;
         }
         for id in &exchange.removes {
             if !next.stocks[id].amount.is_zero() {
@@ -483,7 +493,7 @@ impl Engine {
             }
         }
         for (id, load) in loads {
-            let residual = load - &self.model.capacities[&id].maximum.amount;
+            let residual = load - &model.capacities[&id].maximum.amount;
             if residual.is_positive() {
                 return Err(Error::Capacity { id, residual });
             }
@@ -506,6 +516,7 @@ impl Engine {
                 }
             }
         }
+        next.model = model;
         next.revision = next
             .revision
             .checked_add(1)

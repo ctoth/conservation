@@ -474,12 +474,12 @@ fn restore_revalidates_history_and_does_not_accept_unaccounted_balances() {
     supply(&mut engine, "a", 10);
     let bytes = engine.snapshot().unwrap();
     let mut snapshot: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    snapshot["version"] = serde_json::json!(2);
+    snapshot["version"] = serde_json::json!(999);
     assert!(matches!(
         Engine::restore(&serde_json::to_vec(&snapshot).unwrap()),
         Err(Error::Snapshot(_))
     ));
-    snapshot["version"] = serde_json::json!(1);
+    snapshot["version"] = serde_json::json!(2);
     snapshot["requests"][0]["exchange"]["boundaries"] = serde_json::json!({});
     assert!(matches!(
         Engine::restore(&serde_json::to_vec(&snapshot).unwrap()),

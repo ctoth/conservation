@@ -17,6 +17,7 @@ from ._native import (
     ForeignPreparationError as ForeignPreparationError,
     InvalidExchange as InvalidExchange,
     Law as Law,
+    Model as Model,
     Participation as Participation,
     ParticipationError as ParticipationError,
     Placement as Placement,

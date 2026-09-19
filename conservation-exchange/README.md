@@ -11,6 +11,20 @@ there is no Python settlement implementation or numeric fallback.
 starts empty. Creating and funding a stock is an ordinary recorded exchange
 against a declared boundary-input law, not an unrestricted initial-balance setter.
 
+An exchange may carry `declarations: Model` with additional owners, laws and
+capacities. Python exposes this as `Exchange(..., declarations=Model(...))`.
+These declarations are validated together with the existing model and publish
+in the same immutable root as the quantities and participant records. A new law
+can bind any finite number of stocks, including existing stocks, so a consumer
+can prepare runtime multi-lot transfers without preallocating law arities.
+Participants may use owners declared by their proposal. Failed preparation or
+stale publication publishes neither definitions nor quantities. Identical
+existing definitions are accepted for duplicate delivery; conflicting definitions
+are rejected. Existing laws and capacity maxima cannot be overwritten. To change
+a hold's constraint, declare a new capacity and reassign its stocks in one
+exchange; the resulting contents are checked before publication. Authorization
+to declare model definitions remains the trusted consumer's responsibility.
+
 A `Stock` has a permanent identity, an owner, a dimension, a nonnegative or signed
 domain, and capacity weights. A weight converts stock units to a capacity unit:
 for example, a volume constraint can use a domain-supplied reciprocal density.
@@ -124,7 +138,8 @@ Creation, zero-balance removal and ownership/capacity reassignment are part of a
 exchange. Removal requires an accounted final zero; retired stock IDs cannot be
 reused. Reassignment preserves identity and quantity and rechecks all capacities.
 
-Snapshot format 1 contains the model and ordered canonical committed requests.
+Snapshot format 2 contains the initial model and ordered canonical committed requests,
+including runtime declarations in the exact exchange that committed them.
 Restore replays and revalidates them, rebuilding quantities, revisions, retired
 IDs, records, receipts and boundary evidence once. It never accepts separately
 serialized balances. The input is trusted model/history, not an authenticated or

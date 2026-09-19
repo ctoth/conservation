@@ -153,7 +153,7 @@ dependencies = [
 
 [[package]]
 name = "conservation-exchange"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "conservation-core",
  "num-bigint",
@@ -178,7 +178,7 @@ dependencies = [
 
 [[package]]
 name = "conservation-python"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "conservation-exchange",
  "num-rational",

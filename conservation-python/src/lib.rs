@@ -355,6 +355,37 @@ impl Law {
     }
 }
 
+#[pyclass(name = "Model", module = "conservation_exchange._native", frozen)]
+struct Model {
+    inner: core::Model,
+}
+#[pymethods]
+impl Model {
+    #[new]
+    #[pyo3(signature = (owners, laws, capacities=None))]
+    fn new(
+        py: Python<'_>,
+        owners: BTreeSet<String>,
+        laws: Vec<Py<Law>>,
+        capacities: Option<BTreeMap<String, Py<Capacity>>>,
+    ) -> Self {
+        Self {
+            inner: core::Model {
+                owners,
+                laws: laws
+                    .iter()
+                    .map(|law| law.borrow(py).inner.clone())
+                    .collect(),
+                capacities: capacities
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(id, capacity)| (id, capacity.borrow(py).inner.clone()))
+                    .collect(),
+            },
+        }
+    }
+}
+
 #[pyclass(name = "Exchange", module = "conservation_exchange._native", frozen)]
 struct Exchange {
     inner: core::Exchange,
@@ -362,7 +393,7 @@ struct Exchange {
 #[pymethods]
 impl Exchange {
     #[new]
-    #[pyo3(signature = (id, law, bindings, *, deltas=None, boundaries=None, creates=None, removes=None, moves=None))]
+    #[pyo3(signature = (id, law, bindings, *, deltas=None, boundaries=None, creates=None, removes=None, moves=None, declarations=None))]
     #[allow(clippy::too_many_arguments)] // Mirrors the one native request, with no second schema.
     fn new(
         py: Python<'_>,
@@ -374,6 +405,7 @@ impl Exchange {
         creates: Option<Vec<Py<Stock>>>,
         removes: Option<BTreeSet<String>>,
         moves: Option<BTreeMap<String, Py<Placement>>>,
+        declarations: Option<&Model>,
     ) -> Self {
         Self {
             inner: core::Exchange {
@@ -393,6 +425,7 @@ impl Exchange {
                     .into_iter()
                     .map(|(id, p)| (id, p.borrow(py).inner.clone()))
                     .collect(),
+                declarations: declarations.map(|model| model.inner.clone()),
             },
         }
     }
@@ -608,6 +641,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<Placement>()?;
     module.add_class::<Law>()?;
     module.add_class::<Exchange>()?;
+    module.add_class::<Model>()?;
     module.add_class::<RecordWrite>()?;
     module.add_class::<Participation>()?;
     module.add_class::<Prepared>()?;
