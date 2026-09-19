@@ -1,0 +1,21 @@
+[package]
+name = "conservation-python"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+name = "_native"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+extension-module = ["pyo3/extension-module"]
+
+[dependencies]
+conservation-exchange = { path = "../conservation-exchange" }
+num-rational.workspace = true
+num-traits.workspace = true
+pyo3 = { version = "0.27", features = ["abi3-py310", "generate-import-lib"] }

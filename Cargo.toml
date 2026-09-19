@@ -2,7 +2,9 @@
 members = [
     "conservation-core",
     "conservation-dynamics",
+    "conservation-exchange",
     "conservation-linear",
+    "conservation-python",
     "conservation-stock-flow",
     "conservation-trace",
 ]

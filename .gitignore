@@ -1,3 +1,9 @@
 /target/
 *.[pP][dD][fF]
 *.[pP][nN][gG]
+/.venv/
+/.pytest_cache/
+**/__pycache__/
+*.pyd
+*.so
+*.log
