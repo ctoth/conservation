@@ -184,10 +184,12 @@ uv run --no-sync cargo test --workspace --locked
 uv run --no-sync cargo clippy --workspace --all-targets --locked -- -D warnings
 uv run --no-sync pytest python/tests
 uv run --no-sync pyright
-uv run --no-sync maturin build --locked --out target/wheels
+uv run --no-sync maturin build --locked --out target/contract-wheels
 ```
 
-After building, install the resulting wheel with `uv pip install --reinstall
+Keep the wheel-test output separate from maturin's editable-build artifacts and
+require exactly one wheel there. After building, install it with `uv pip install --reinstall
 --no-deps <wheel>` and rerun pytest with `--no-sync` to exercise the installed
 artifact. The package test checks the actual native module, version and typing
-files. CI covers Rust 1.85, stable Rust, Python 3.10/3.13, Linux and Windows.
+files. CI tests Rust 1.85 compatibility and uses stable Rust for formatting/lint
+policy; it covers Python 3.10/3.13, Linux and Windows.

@@ -43,10 +43,15 @@ jobs:
           version: "0.8.8"
       - name: Build isolated native package
         run: uv sync --locked --python "${{ matrix.python }}"
-      - name: Rust contracts and static checks
+      - name: Rust compatibility and contracts
+        run: |
+          uv run --no-sync cargo test --workspace --locked
+      # MSRV proves build/runtime compatibility. Stable owns the lint policy;
+      # historical Clippy versions diagnose unchanged code differently.
+      - name: Rust formatting and lint
+        if: matrix.rust == 'stable'
         run: |
           uv run --no-sync cargo fmt --all -- --check
-          uv run --no-sync cargo test --workspace --locked
           uv run --no-sync cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Python contracts and typing
         run: |
@@ -55,8 +60,10 @@ jobs:
           uv run --no-sync pyright
       - name: Build and test installed wheel
         run: |
-          uv run --no-sync maturin build --locked --out target/wheels
-          uv pip install --reinstall --no-deps target/wheels/*.whl
+          uv run --no-sync maturin build --locked --out target/contract-wheels
+          wheels=(target/contract-wheels/*.whl)
+          test "${#wheels[@]}" -eq 1
+          uv pip install --reinstall --no-deps "${wheels[0]}"
           uv run --no-sync pytest python/tests -q
       - name: Lockfiles remain unchanged
         run: git diff --exit-code -- Cargo.lock uv.lock
