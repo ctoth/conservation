@@ -58,7 +58,7 @@ def test_installed_package_is_native_and_versioned() -> None:
     assert native is not None and native.origin is not None
     assert Path(native.origin).suffix in {".pyd", ".so"}
     assert ce.Engine.__module__ == "conservation_exchange._native"
-    assert version("conservation-exchange") == ce.__version__ == "0.1.0"
+    assert version("conservation-exchange") == ce.__version__ == "0.2.0"
     assert Path(ce.__file__).with_name("py.typed").is_file()
     assert Path(ce.__file__).with_name("_native.pyi").is_file()
 

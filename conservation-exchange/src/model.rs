@@ -149,7 +149,7 @@ pub struct Law {
     pub constraints: Vec<Constraint>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Model {
     pub owners: BTreeSet<String>,
@@ -158,6 +158,37 @@ pub struct Model {
 }
 
 impl Model {
+    /// Extend immutable definitions; repeated identical declarations are idempotent.
+    pub(crate) fn extended(&self, declarations: &Self) -> Result<Self, Error> {
+        let mut next = self.clone();
+        next.owners.extend(declarations.owners.iter().cloned());
+        for (id, capacity) in &declarations.capacities {
+            if let Some(existing) = next.capacities.get(id) {
+                if existing != capacity {
+                    return Err(invalid(format!("cannot replace capacity {id}")));
+                }
+            } else {
+                next.capacities.insert(id.clone(), capacity.clone());
+            }
+        }
+        let mut seen = BTreeSet::new();
+        for law in &declarations.laws {
+            if !seen.insert(&law.id) {
+                return Err(invalid("duplicate law declaration"));
+            }
+            if let Some(existing) = next.laws.iter().find(|item| item.id == law.id) {
+                if existing != law {
+                    return Err(invalid(format!("cannot replace law {}", law.id)));
+                }
+            } else {
+                next.laws.push(law.clone());
+            }
+        }
+        next.laws.sort_by(|a, b| a.id.cmp(&b.id));
+        next.validate()?;
+        Ok(next)
+    }
+
     pub(crate) fn validate(&self) -> Result<(), Error> {
         if self.owners.is_empty() {
             return Err(invalid("model requires at least one owner"));
@@ -264,6 +295,7 @@ pub struct Exchange {
     pub creates: Vec<Stock>,
     pub removes: BTreeSet<String>,
     pub moves: BTreeMap<String, Placement>,
+    pub declarations: Option<Model>,
 }
 
 impl Exchange {
@@ -277,6 +309,7 @@ impl Exchange {
             creates: Vec::new(),
             removes: BTreeSet::new(),
             moves: BTreeMap::new(),
+            declarations: None,
         }
     }
 }
