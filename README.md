@@ -2,7 +2,7 @@
 
 Exact conservation-law derivation and trace evidence for typed quantitative systems.
 
-This Cargo workspace contains four publishable crates:
+This Cargo workspace contains the following library crates:
 
 - `conservation-core` defines validated typed axis and kind identifiers, exact
   rational balance laws, and origin metadata tags. Origin metadata records how
@@ -24,11 +24,21 @@ This Cargo workspace contains four publishable crates:
 - `conservation-trace` checks finite-state traces exactly and returns typed
   satisfied/violated verdicts, structurally separate from malformed-trace
   errors. Trace witnesses do not inherit derivation-origin metadata.
+- `conservation-stock-flow` compiles exact stock-flow carriers and checks
+  transition and boundary evidence without reimplementing settlement.
+- `conservation-exchange` owns exact coupled transformations, signed coordinates,
+  capacities, immutable participant records and atomic prepare/publish. It does
+  not proportionally limit individual legs. See its [contract and Python API](conservation-exchange/README.md).
+
+`conservation-python` provides the direct PyO3 binding for `conservation-exchange`.
+Run `uv sync --locked` before the Python tests or binding-aware Cargo commands;
+see the exchange documentation for the full verification commands.
+
 ## Boundary
 
 The core, dynamics, linear, and trace foundation is deliberately independent
-of any institution model and of Bridgman. It contains no Python bindings,
-BLAS integration, domain-specific ecosystem equations, or Noether derivation.
+of any institution model and of Bridgman. The optional Python binding does not
+introduce BLAS integration, domain-specific ecosystem equations or Noether derivation.
 `Provenance::Noether` is a tag reserved for laws produced elsewhere.
 
 The executable institution adapter lives downstream as
