@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::sync::Arc;
 
 use conservation_core::KindId;
 use num_rational::BigRational;
@@ -158,37 +159,6 @@ pub struct Model {
 }
 
 impl Model {
-    /// Extend immutable definitions; repeated identical declarations are idempotent.
-    pub(crate) fn extended(&self, declarations: &Self) -> Result<Self, Error> {
-        let mut next = self.clone();
-        next.owners.extend(declarations.owners.iter().cloned());
-        for (id, capacity) in &declarations.capacities {
-            if let Some(existing) = next.capacities.get(id) {
-                if existing != capacity {
-                    return Err(invalid(format!("cannot replace capacity {id}")));
-                }
-            } else {
-                next.capacities.insert(id.clone(), capacity.clone());
-            }
-        }
-        let mut seen = BTreeSet::new();
-        for law in &declarations.laws {
-            if !seen.insert(&law.id) {
-                return Err(invalid("duplicate law declaration"));
-            }
-            if let Some(existing) = next.laws.iter().find(|item| item.id == law.id) {
-                if existing != law {
-                    return Err(invalid(format!("cannot replace law {}", law.id)));
-                }
-            } else {
-                next.laws.push(law.clone());
-            }
-        }
-        next.laws.sort_by(|a, b| a.id.cmp(&b.id));
-        next.validate()?;
-        Ok(next)
-    }
-
     pub(crate) fn validate(&self) -> Result<(), Error> {
         if self.owners.is_empty() {
             return Err(invalid("model requires at least one owner"));
@@ -209,45 +179,82 @@ impl Model {
             if !laws.insert(&law.id) {
                 return Err(invalid("duplicate law"));
             }
-            for (id, dimension) in law.slots.iter().chain(&law.boundaries) {
-                identifier(id)?;
-                dimension.validate()?;
-            }
-            for (id, fact) in &law.facts {
-                identifier(id)?;
-                fact.dimension.validate()?;
-                self.owner(&fact.owner)?;
-                if !law.participants.contains(&fact.owner) {
-                    return Err(invalid("fact owner must be a required participant"));
-                }
-            }
-            for owner in &law.participants {
-                self.owner(owner)?;
-            }
-            let mut names = BTreeSet::new();
-            let mut covered = BTreeSet::new();
-            for constraint in &law.constraints {
-                identifier(&constraint.id)?;
-                if !names.insert(&constraint.id) {
-                    return Err(invalid("duplicate constraint"));
-                }
-                constraint.validate(law)?;
-                constraint.coverage(&mut covered);
-            }
-            for id in law.slots.keys() {
-                if !covered.contains(&("slot", id.clone())) {
-                    return Err(invalid(format!(
-                        "slot {id} has no equality constraint on its transition"
-                    )));
-                }
-            }
-            for id in law.boundaries.keys() {
-                if !covered.contains(&("boundary", id.clone())) {
-                    return Err(invalid(format!("boundary {id} has no equality constraint")));
-                }
-            }
+            validate_law(law, |id| self.owner(id))?;
         }
         Ok(())
+    }
+
+    pub(crate) fn owner(&self, owner: &str) -> Result<(), Error> {
+        if !self.owners.contains(owner) {
+            return Err(invalid(format!("undeclared owner {owner}")));
+        }
+        Ok(())
+    }
+}
+
+/// Validated internal definitions. Payloads survive immutable root transitions.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ValidatedModel {
+    pub(crate) owners: BTreeSet<String>,
+    pub(crate) capacities: BTreeMap<String, Arc<Capacity>>,
+    pub(crate) laws: BTreeMap<String, Arc<Law>>,
+}
+
+impl ValidatedModel {
+    pub(crate) fn new(model: &Model) -> Result<Self, Error> {
+        model.validate()?;
+        Ok(Self {
+            owners: model.owners.clone(),
+            capacities: model
+                .capacities
+                .iter()
+                .map(|(id, value)| (id.clone(), Arc::new(value.clone())))
+                .collect(),
+            laws: model
+                .laws
+                .iter()
+                .map(|law| (law.id.clone(), Arc::new(law.clone())))
+                .collect(),
+        })
+    }
+
+    pub(crate) fn extended(&self, declarations: &Model) -> Result<Self, Error> {
+        let mut next = self.clone();
+        for owner in &declarations.owners {
+            identifier(owner)?;
+            next.owners.insert(owner.clone());
+        }
+        for (id, capacity) in &declarations.capacities {
+            if let Some(existing) = next.capacities.get(id) {
+                if existing.as_ref() != capacity {
+                    return Err(invalid(format!("cannot replace capacity {id}")));
+                }
+            } else {
+                identifier(id)?;
+                capacity.maximum.validate()?;
+                if capacity.maximum.amount.is_negative() {
+                    return Err(invalid("negative capacity"));
+                }
+                next.capacities
+                    .insert(id.clone(), Arc::new(capacity.clone()));
+            }
+        }
+        let mut seen = BTreeSet::new();
+        for law in &declarations.laws {
+            if !seen.insert(&law.id) {
+                return Err(invalid("duplicate law declaration"));
+            }
+            if let Some(existing) = next.laws.get(&law.id) {
+                if existing.as_ref() != law {
+                    return Err(invalid(format!("cannot replace law {}", law.id)));
+                }
+            } else {
+                identifier(&law.id)?;
+                validate_law(law, |owner| next.owner(owner))?;
+                next.laws.insert(law.id.clone(), Arc::new(law.clone()));
+            }
+        }
+        Ok(next)
     }
 
     pub(crate) fn owner(&self, owner: &str) -> Result<(), Error> {
@@ -280,6 +287,144 @@ impl Model {
             }
         }
         Ok(())
+    }
+}
+
+fn validate_law(law: &Law, check_owner: impl Fn(&str) -> Result<(), Error>) -> Result<(), Error> {
+    for (id, dimension) in law.slots.iter().chain(&law.boundaries) {
+        identifier(id)?;
+        dimension.validate()?;
+    }
+    for (id, fact) in &law.facts {
+        identifier(id)?;
+        fact.dimension.validate()?;
+        check_owner(&fact.owner)?;
+        if !law.participants.contains(&fact.owner) {
+            return Err(invalid("fact owner must be a required participant"));
+        }
+    }
+    for owner in &law.participants {
+        check_owner(owner)?;
+    }
+    let mut names = BTreeSet::new();
+    let mut covered = BTreeSet::new();
+    for constraint in &law.constraints {
+        identifier(&constraint.id)?;
+        if !names.insert(&constraint.id) {
+            return Err(invalid("duplicate constraint"));
+        }
+        constraint.validate(law)?;
+        constraint.coverage(&mut covered);
+    }
+    for id in law.slots.keys() {
+        if !covered.contains(&("slot", id.clone())) {
+            return Err(invalid(format!(
+                "slot {id} has no equality constraint on its transition"
+            )));
+        }
+    }
+    for id in law.boundaries.keys() {
+        if !covered.contains(&("boundary", id.clone())) {
+            return Err(invalid(format!("boundary {id} has no equality constraint")));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod validation_tests {
+    use super::*;
+    use crate::Expr;
+
+    fn law(id: &str) -> Law {
+        let mass = Dimension::base("mass").unwrap();
+        Law {
+            id: id.into(),
+            slots: BTreeMap::from([("stock".into(), mass.clone())]),
+            boundaries: BTreeMap::new(),
+            facts: BTreeMap::new(),
+            participants: BTreeSet::from(["owner".into()]),
+            constraints: vec![Constraint::equal(
+                "zero",
+                Expr::delta("stock"),
+                Expr::constant(zero(&mass)),
+            )],
+        }
+    }
+
+    #[test]
+    fn incremental_validation_rejects_invalid_new_definitions_without_revalidating_old_payloads() {
+        let public = Model {
+            owners: BTreeSet::from(["owner".into()]),
+            capacities: BTreeMap::from([(
+                "hold".into(),
+                Capacity {
+                    maximum: zero(&Dimension::base("mass").unwrap()),
+                },
+            )]),
+            laws: vec![law("hold")],
+        };
+        let model = ValidatedModel::new(&public).unwrap();
+        let valid = Model {
+            owners: BTreeSet::from(["new-owner".into()]),
+            laws: vec![law("new")],
+            ..Model::default()
+        };
+        let extended = model.extended(&valid).unwrap();
+        assert!(Arc::ptr_eq(&model.laws["hold"], &extended.laws["hold"]));
+        assert!(Arc::ptr_eq(
+            &model.capacities["hold"],
+            &extended.capacities["hold"]
+        ));
+        let mut cases = Vec::new();
+        let mut invalid = valid.clone();
+        invalid.owners.insert(" ".into());
+        cases.push(invalid);
+        let mut invalid = valid.clone();
+        invalid.capacities.insert(
+            "negative".into(),
+            Capacity {
+                maximum: Quantity::new(
+                    BigRational::from_integer((-1).into()),
+                    Dimension::base("mass").unwrap(),
+                ),
+            },
+        );
+        cases.push(invalid);
+        let mut invalid = valid.clone();
+        invalid.laws[0].id = " ".into();
+        cases.push(invalid);
+        let mut invalid = valid.clone();
+        invalid.laws[0].participants.insert("missing".into());
+        cases.push(invalid);
+        let mut invalid = valid.clone();
+        invalid.laws[0].constraints.clear();
+        cases.push(invalid);
+        let mut invalid = valid.clone();
+        invalid.laws.push(invalid.laws[0].clone());
+        cases.push(invalid);
+        for declarations in cases {
+            let mut combined = public.clone();
+            combined.owners.extend(declarations.owners.clone());
+            combined.capacities.extend(declarations.capacities.clone());
+            combined.laws.extend(declarations.laws.clone());
+            assert!(combined.validate().is_err());
+            assert!(model.extended(&declarations).is_err());
+        }
+        let mut replacement = public.clone();
+        replacement.laws[0].constraints.clear();
+        assert!(model.extended(&replacement).is_err());
+        let mut replacement = public.clone();
+        replacement
+            .capacities
+            .get_mut("hold")
+            .unwrap()
+            .maximum
+            .amount = BigRational::from_integer(1.into());
+        assert!(model.extended(&replacement).is_err());
+        assert!(model.extended(&public).is_ok());
+        assert_eq!(model.laws.len(), 1);
+        assert_eq!(model.owners.len(), 1);
     }
 }
 
