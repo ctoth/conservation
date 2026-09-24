@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "conservation-bridgman",
     "conservation-core",
     "conservation-dynamics",
     "conservation-exchange",
