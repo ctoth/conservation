@@ -89,7 +89,7 @@ pub struct StockSpec<K> {
 pub struct ProposedFlow<K> {
     /// Process responsible for the request.
     pub process: ProcessId,
-    /// Conserved kind being moved.
+    /// The kind of the amount moved: the endpoint stocks' `kind.difference()`.
     pub kind: K,
     /// Source stock, or `None` for a boundary input.
     pub source: Option<StockId>,
@@ -115,7 +115,7 @@ pub enum FlowRole {
 pub struct AppliedFlow<K> {
     /// Process responsible for the flow.
     pub process: ProcessId,
-    /// Conserved kind moved by the flow.
+    /// The kind of the amount moved: the endpoint stocks' `kind.difference()`.
     pub kind: K,
     /// Source stock, absent for an input.
     pub source: Option<StockId>,
@@ -167,7 +167,7 @@ pub enum StockFlowError<K> {
     SameStock(StockId),
     /// A flow references an undeclared stock.
     UnknownStock(StockId),
-    /// A flow kind differs from a referenced stock kind.
+    /// A flow kind differs from the difference kind of a referenced stock.
     KindMismatch {
         /// Referenced stock.
         stock: StockId,
@@ -175,6 +175,17 @@ pub enum StockFlowError<K> {
         stock_kind: K,
         /// Kind declared by the flow.
         flow_kind: K,
+    },
+    /// A transfer joins stocks of different kinds.
+    TransferKinds {
+        /// Source stock.
+        source: StockId,
+        /// Kind declared by the source stock.
+        source_kind: K,
+        /// Target stock.
+        target: StockId,
+        /// Kind declared by the target stock.
+        target_kind: K,
     },
     /// A compiled state's amount vector has the wrong length.
     AmountCount {
@@ -208,7 +219,17 @@ impl<K: Kind> fmt::Display for StockFlowError<K> {
                 flow_kind,
             } => write!(
                 formatter,
-                "stock {stock} contains kind {stock_kind}, not flow kind {flow_kind}"
+                "stock {stock} of kind {stock_kind} moves differences of kind {}, not flow kind {flow_kind}",
+                stock_kind.difference()
+            ),
+            Self::TransferKinds {
+                source,
+                source_kind,
+                target,
+                target_kind,
+            } => write!(
+                formatter,
+                "transfer from stock {source} of kind {source_kind} to stock {target} of kind {target_kind} crosses balances"
             ),
             Self::AmountCount { expected, actual } => write!(
                 formatter,
@@ -354,6 +375,14 @@ impl<K: Kind> StockFlowSystem<K> {
                 (Some(source), Some(target)) if source == target => {
                     return Err(StockFlowError::SameStock(self.stocks[source].clone()));
                 }
+                (Some(source), Some(target)) if self.kinds[source] != self.kinds[target] => {
+                    return Err(StockFlowError::TransferKinds {
+                        source: self.stocks[source].clone(),
+                        source_kind: self.kinds[source],
+                        target: self.stocks[target].clone(),
+                        target_kind: self.kinds[target],
+                    });
+                }
                 (None, Some(_)) => FlowRole::Input,
                 (Some(_), None) => FlowRole::Output,
                 (Some(_), Some(_)) => FlowRole::Transfer,
@@ -390,15 +419,20 @@ impl<K: Kind> StockFlowSystem<K> {
                 || flow.proposal.amount.clone(),
                 |source| &flow.proposal.amount * &scales[source],
             );
-            if let Some(source) = flow.source {
-                deltas[source] -= &amount;
-            } else {
-                *batch_inputs.entry(flow.proposal.kind).or_default() += &amount;
-            }
-            if let Some(target) = flow.target {
-                deltas[target] += &amount;
-            } else {
-                *batch_outputs.entry(flow.proposal.kind).or_default() += &amount;
+            match (flow.source, flow.target) {
+                (Some(source), Some(target)) => {
+                    deltas[source] -= &amount;
+                    deltas[target] += &amount;
+                }
+                (None, Some(target)) => {
+                    deltas[target] += &amount;
+                    *batch_inputs.entry(self.kinds[target]).or_default() += &amount;
+                }
+                (Some(source), None) => {
+                    deltas[source] -= &amount;
+                    *batch_outputs.entry(self.kinds[source]).or_default() += &amount;
+                }
+                (None, None) => unreachable!("disconnected flows were rejected before settlement"),
             }
             applied.push(AppliedFlow {
                 process: flow.proposal.process.clone(),
@@ -432,7 +466,7 @@ impl<K: Kind> StockFlowSystem<K> {
             .get(stock)
             .copied()
             .ok_or_else(|| StockFlowError::UnknownStock(stock.clone()))?;
-        if self.kinds[index] != flow_kind {
+        if self.kinds[index].difference() != flow_kind {
             return Err(StockFlowError::KindMismatch {
                 stock: stock.clone(),
                 stock_kind: self.kinds[index],

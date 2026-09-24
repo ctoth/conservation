@@ -65,7 +65,7 @@ impl<K: Kind> FlowTopology<K> {
             .zip(report.requested.iter().zip(&report.applied))
             .map(|(flow, (requested, applied))| AppliedFlow {
                 process: self.processes()[flow.process()].clone(),
-                kind: self.kinds()[flow.kind()],
+                kind: self.kinds()[flow.kind()].difference(),
                 source: flow.source().map(|index| self.stocks()[index].clone()),
                 target: flow.target().map(|index| self.stocks()[index].clone()),
                 requested: requested.clone(),

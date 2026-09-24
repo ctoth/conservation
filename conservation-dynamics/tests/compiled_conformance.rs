@@ -148,6 +148,47 @@ fn topology_compilation_rejects_every_malformed_shape() {
 }
 
 #[test]
+fn flows_carry_the_difference_kind_of_a_point_stock() {
+    assert!(
+        FlowTopology::new(
+            [definition("body", TestKind::Temperature)],
+            [flow("warm", TestKind::TemperatureDelta, None, Some("body"))]
+        )
+        .is_ok()
+    );
+    assert_eq!(
+        FlowTopology::new(
+            [definition("body", TestKind::Temperature)],
+            [flow("warm", TestKind::Temperature, None, Some("body"))]
+        ),
+        Err(StockFlowError::KindMismatch {
+            stock: stock("body"),
+            stock_kind: TestKind::Temperature,
+            flow_kind: TestKind::Temperature,
+        })
+    );
+}
+
+#[test]
+fn a_transfer_between_balances_that_share_a_difference_is_rejected() {
+    assert_eq!(
+        FlowTopology::new(
+            [
+                definition("region", TestKind::Enthalpy),
+                definition("sink", TestKind::Heat),
+            ],
+            [flow("leak", TestKind::Heat, Some("region"), Some("sink"))]
+        ),
+        Err(StockFlowError::TransferKinds {
+            source: stock("region"),
+            source_kind: TestKind::Enthalpy,
+            target: stock("sink"),
+            target_kind: TestKind::Heat,
+        })
+    );
+}
+
+#[test]
 fn both_backends_observe_pre_step_state_and_defer_inputs_until_the_next_batch() {
     let topology = material_topology();
     let mut exact = ExactState::new(topology.clone(), vec![integer(0), integer(0)]).unwrap();

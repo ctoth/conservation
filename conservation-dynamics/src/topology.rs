@@ -18,7 +18,7 @@ pub struct StockDefinition<K> {
 pub struct FlowSpec<K> {
     /// Process responsible for this flow slot.
     pub process: ProcessId,
-    /// Conserved quantity kind moved by the flow.
+    /// The kind of the amount moved: the endpoint stocks' `kind.difference()`.
     pub kind: K,
     /// Source stock, absent for a boundary input.
     pub source: Option<StockId>,
@@ -42,7 +42,7 @@ impl CompiledFlow {
         self.process
     }
 
-    /// Index into [`FlowTopology::kinds`].
+    /// Index into [`FlowTopology::kinds`] of the balance this flow enters.
     pub fn kind(&self) -> usize {
         self.kind
     }
@@ -139,18 +139,24 @@ impl<K: Kind> FlowTopology<K> {
                 &stock_kinds,
                 &kinds,
             )?;
-            let kind = *kind_indices
-                .get(&flow.kind)
-                .expect("a connected, kind-valid flow references a declared kind");
-            let role = match (source, target) {
+            let (role, endpoint) = match (source, target) {
                 (None, None) => unreachable!("disconnected flows were rejected before resolution"),
                 (Some(source), Some(target)) if source == target => {
                     return Err(StockFlowError::SameStock(stock_ids[source].clone()));
                 }
-                (None, Some(_)) => FlowRole::Input,
-                (Some(_), None) => FlowRole::Output,
-                (Some(_), Some(_)) => FlowRole::Transfer,
+                (Some(source), Some(target)) if stock_kinds[source] != stock_kinds[target] => {
+                    return Err(StockFlowError::TransferKinds {
+                        source: stock_ids[source].clone(),
+                        source_kind: kinds[stock_kinds[source]],
+                        target: stock_ids[target].clone(),
+                        target_kind: kinds[stock_kinds[target]],
+                    });
+                }
+                (None, Some(target)) => (FlowRole::Input, target),
+                (Some(source), None) => (FlowRole::Output, source),
+                (Some(source), Some(_)) => (FlowRole::Transfer, source),
             };
+            let kind = stock_kinds[endpoint];
             let process = match process_indices.get(&flow.process) {
                 Some(index) => *index,
                 None => {
@@ -241,7 +247,7 @@ fn resolve_stock<K: Kind>(
                 .copied()
                 .ok_or_else(|| StockFlowError::UnknownStock(stock.clone()))?;
             let stock_kind = kinds[stock_kinds[index]];
-            if stock_kind != flow_kind {
+            if stock_kind.difference() != flow_kind {
                 return Err(StockFlowError::KindMismatch {
                     stock: stock.clone(),
                     stock_kind,
