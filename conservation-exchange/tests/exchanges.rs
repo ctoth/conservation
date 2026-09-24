@@ -1,21 +1,37 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use conservation_core::{DimensionAlgebra, Kind};
 use conservation_exchange::*;
+use conservation_test_kinds::{TestKind, TestKinds};
 use num_rational::BigRational;
 
+type Quantity = conservation_exchange::Quantity<TestKind>;
+type Stock = conservation_exchange::Stock<TestKind>;
+type Exchange = conservation_exchange::Exchange<TestKind>;
+type Engine = conservation_exchange::Engine<TestKind>;
+type Error = conservation_exchange::Error<TestKind>;
+type Expr = conservation_exchange::Expr<TestKind>;
+type Constraint = conservation_exchange::Constraint<TestKind>;
+type Model = conservation_exchange::Model<TestKind>;
+type Participation = conservation_exchange::Participation<TestKind>;
+
+fn quantity(value: i64, kind: TestKind) -> Quantity {
+    Quantity::new(BigRational::from_integer(value.into()), kind)
+}
+
 fn q(value: i64) -> Quantity {
-    Quantity::new(
-        BigRational::from_integer(value.into()),
-        Dimension::base("material").unwrap(),
-    )
+    quantity(value, TestKind::Material)
 }
 
 fn spec(id: &str) -> Stock {
+    kind_spec(id, TestKind::Material)
+}
+
+fn kind_spec(id: &str, kind: TestKind) -> Stock {
     Stock {
         id: id.into(),
         owner: "owner".into(),
-        dimension: q(0).dimension,
-        domain: Domain::Nonnegative,
+        kind,
         capacities: BTreeMap::new(),
     }
 }
@@ -31,8 +47,8 @@ fn model() -> Model {
         laws: vec![
             Law {
                 id: "supply".into(),
-                slots: BTreeMap::from([("stock".into(), q(0).dimension)]),
-                boundaries: BTreeMap::from([("supply".into(), q(0).dimension)]),
+                slots: BTreeMap::from([("stock".into(), TestKind::Material)]),
+                boundaries: BTreeMap::from([("supply".into(), TestKind::Material)]),
                 facts: BTreeMap::new(),
                 participants: BTreeSet::new(),
                 constraints: vec![equation(
@@ -45,7 +61,7 @@ fn model() -> Model {
                 id: "combine".into(),
                 slots: ["a", "b", "out"]
                     .into_iter()
-                    .map(|id| (id.into(), q(0).dimension))
+                    .map(|id| (id.into(), TestKind::Material))
                     .collect(),
                 boundaries: BTreeMap::new(),
                 facts: BTreeMap::new(),
@@ -112,7 +128,7 @@ fn missing_second_input_preserves_every_stock_and_record() {
     let evidence = journal(&engine, &proposal);
     assert!(matches!(
         engine.prepare(proposal, vec![evidence]),
-        Err(Error::Domain { .. })
+        Err(Error::BelowFloor { .. })
     ));
     assert_eq!(engine.snapshot().unwrap(), before);
     assert_eq!(engine.record("journal", "reaction"), None);
@@ -158,7 +174,7 @@ fn duplicate_restore_and_conflicting_reuse_are_distinct() {
     let first = engine.publish(prepared.clone()).unwrap();
     assert_eq!(engine.publish(prepared.clone()).unwrap(), first);
     let bytes = engine.snapshot().unwrap();
-    let mut restored = Engine::restore(&bytes).unwrap();
+    let mut restored = Engine::restore(&bytes, &TestKinds).unwrap();
     assert_eq!(restored.snapshot().unwrap(), bytes);
     assert!(matches!(
         restored.publish(prepared),
@@ -205,10 +221,7 @@ fn supply_stock(engine: &mut Engine, stock: Stock, amount: Quantity, law: &str) 
 }
 
 fn one() -> Quantity {
-    Quantity::new(
-        BigRational::from_integer(1.into()),
-        Dimension::dimensionless(),
-    )
+    quantity(1, TestKind::Ratio)
 }
 
 #[test]
@@ -243,47 +256,194 @@ fn capacity_uses_whole_result_and_rejects_without_losing_inputs() {
     assert_eq!(engine.snapshot().unwrap(), before);
 }
 
+/// A clone of the `supply` law under another id, with `kind` for slot and boundary.
+fn supply_law(id: &str, kind: TestKind) -> Law<TestKind> {
+    let mut law = model().laws[0].clone();
+    law.id = id.into();
+    law.slots.insert("stock".into(), kind);
+    law.boundaries.insert("supply".into(), kind);
+    law
+}
+
+fn withdrawal(id: &str, stock: Stock, law: &str, amount: Quantity) -> Exchange {
+    let mut proposal = Exchange::new(id, law);
+    proposal.bindings.insert("stock".into(), stock.id.clone());
+    proposal.creates.push(stock);
+    proposal.deltas.insert("stock".into(), amount.clone());
+    proposal.boundaries.insert("supply".into(), amount);
+    proposal
+}
+
 #[test]
 fn signed_coordinate_is_distinct_from_nonnegative_stock() {
-    let mut engine = Engine::new(model()).unwrap();
-    let mut signed = spec("signed");
-    signed.domain = Domain::Signed;
-    supply_stock(&mut engine, signed, q(-4), "supply");
+    let mut declaration = model();
+    declaration
+        .laws
+        .push(supply_law("signed-supply", TestKind::MaterialBalance));
+    let mut engine = Engine::new(declaration).unwrap();
+    supply_stock(
+        &mut engine,
+        kind_spec("signed", TestKind::MaterialBalance),
+        quantity(-4, TestKind::MaterialBalance),
+        "signed-supply",
+    );
     assert_eq!(engine.amount("signed").unwrap(), &q(-4).amount);
-    let mut proposal = Exchange::new("negative-material", "supply");
-    proposal.bindings.insert("stock".into(), "material".into());
-    proposal.creates.push(spec("material"));
-    proposal.deltas.insert("stock".into(), q(-1));
-    proposal.boundaries.insert("supply".into(), q(-1));
+    let proposal = withdrawal("negative-material", spec("material"), "supply", q(-1));
     assert!(matches!(
         engine.prepare(proposal, vec![]),
-        Err(Error::Domain { .. })
+        Err(Error::BelowFloor {
+            stock,
+            kind: TestKind::Material,
+            ..
+        }) if stock == "material"
     ));
     assert!(engine.stock("material").is_err());
 }
 
 #[test]
-fn coupled_conversion_resolves_tiny_release_beside_huge_rest_stock() {
-    let energy = Dimension::base("energy").unwrap();
-    let material = q(0).dimension;
+fn floor_refusal_names_stock_and_kind() {
     let mut declaration = model();
-    let mut energy_supply = declaration.laws[0].clone();
-    energy_supply.id = "energy-supply".into();
-    energy_supply.slots.insert("stock".into(), energy.clone());
-    energy_supply
-        .boundaries
-        .insert("supply".into(), energy.clone());
-    declaration.laws.push(energy_supply);
+    declaration
+        .laws
+        .push(supply_law("signed-supply", TestKind::MaterialBalance));
+    let mut engine = Engine::new(declaration).unwrap();
+    let floored = withdrawal("floored", spec("material"), "supply", q(-1));
+    assert_eq!(
+        engine.prepare(floored, vec![]).err(),
+        Some(Error::BelowFloor {
+            stock: "material".into(),
+            kind: TestKind::Material,
+            amount: q(-1).amount,
+        })
+    );
+    let signed = withdrawal(
+        "signed",
+        kind_spec("balance", TestKind::MaterialBalance),
+        "signed-supply",
+        quantity(-1, TestKind::MaterialBalance),
+    );
+    let prepared = engine.prepare(signed, vec![]).unwrap();
+    engine.publish(prepared).unwrap();
+    assert_eq!(engine.amount("balance").unwrap(), &q(-1).amount);
+}
+
+#[test]
+fn mismatched_leg_is_rejected_naming_both_kinds() {
+    let engine = Engine::new(model()).unwrap();
+    let mut proposal = Exchange::new("energy-in-material", "supply");
+    proposal.bindings.insert("stock".into(), "battery".into());
+    proposal
+        .creates
+        .push(kind_spec("battery", TestKind::Energy));
+    let error = engine.prepare(proposal, vec![]).err().unwrap();
+    assert_eq!(
+        error,
+        Error::Kinds {
+            context: KindContext::Slot {
+                slot: "stock".into(),
+                stock: "battery".into(),
+            },
+            expected: TestKind::Material,
+            found: TestKind::Energy,
+        }
+    );
+    let message = error.to_string();
+    assert!(message.contains("Material") && message.contains("Energy"));
+    assert!(engine.stock("battery").is_err());
+}
+
+#[test]
+fn energy_and_torque_cannot_bind_one_slot() {
+    assert_eq!(TestKind::Energy.dimensions(), TestKind::Torque.dimensions());
+    let mut declaration = model();
+    declaration
+        .laws
+        .push(supply_law("energy-supply", TestKind::Energy));
+    let engine = Engine::new(declaration).unwrap();
+    let proposal = withdrawal(
+        "spanner-supply",
+        kind_spec("spanner", TestKind::Torque),
+        "energy-supply",
+        quantity(0, TestKind::Energy),
+    );
+    let error = engine.prepare(proposal, vec![]).err().unwrap();
+    assert_eq!(
+        error,
+        Error::Kinds {
+            context: KindContext::Slot {
+                slot: "stock".into(),
+                stock: "spanner".into(),
+            },
+            expected: TestKind::Energy,
+            found: TestKind::Torque,
+        }
+    );
+    let message = error.to_string();
+    assert!(message.contains("Energy") && message.contains("Torque"));
+    assert!(engine.stock("spanner").is_err());
+}
+
+#[test]
+fn equal_dimension_kinds_cannot_be_summed() {
+    let mut declaration = model();
+    declaration.laws.push(Law {
+        id: "mixed".into(),
+        slots: BTreeMap::from([
+            ("e".into(), TestKind::Energy),
+            ("t".into(), TestKind::Torque),
+        ]),
+        boundaries: BTreeMap::new(),
+        facts: BTreeMap::new(),
+        participants: BTreeSet::new(),
+        constraints: vec![equation(
+            "mixed-sum",
+            Expr::sum([Expr::delta("e"), Expr::delta("t")]),
+            Expr::constant(quantity(0, TestKind::Energy)),
+        )],
+    });
+    assert_eq!(
+        Engine::new(declaration).err(),
+        Some(Error::Kinds {
+            context: KindContext::Sum,
+            expected: TestKind::Energy,
+            found: TestKind::Torque,
+        })
+    );
+}
+
+#[test]
+fn delta_kind_must_equal_slot_difference() {
+    assert_eq!(TestKind::Material.difference(), TestKind::Material);
+    let engine = Engine::new(model()).unwrap();
+    let mut proposal = withdrawal("balance-delta", spec("stock"), "supply", q(1));
+    proposal
+        .deltas
+        .insert("stock".into(), quantity(1, TestKind::MaterialBalance));
+    assert_eq!(
+        engine.prepare(proposal, vec![]).err(),
+        Some(Error::Kinds {
+            context: KindContext::Delta {
+                slot: "stock".into()
+            },
+            expected: TestKind::Material,
+            found: TestKind::MaterialBalance,
+        })
+    );
+}
+
+#[test]
+fn coupled_conversion_resolves_tiny_release_beside_huge_rest_stock() {
+    let energy = TestKind::Energy;
+    let material = TestKind::Material;
+    let mut declaration = model();
+    declaration.laws.push(supply_law("energy-supply", energy));
     let conversion = Quantity::new(
         BigRational::from_integer(90_000_000_000_000_000_i64.into()),
-        energy.quotient(&material).unwrap(),
+        TestKind::EnergyPerMaterial,
     );
     declaration.laws.push(Law {
         id: "conversion".into(),
-        slots: BTreeMap::from([
-            ("mass".into(), material.clone()),
-            ("energy".into(), energy.clone()),
-        ]),
+        slots: BTreeMap::from([("mass".into(), material), ("energy".into(), energy)]),
         boundaries: BTreeMap::new(),
         facts: BTreeMap::new(),
         participants: BTreeSet::new(),
@@ -293,7 +453,7 @@ fn coupled_conversion_resolves_tiny_release_beside_huge_rest_stock() {
                 Expr::delta("mass").product(Expr::constant(conversion)),
                 Expr::delta("energy"),
             ]),
-            Expr::constant(Quantity::new(q(0).amount, energy.clone())),
+            Expr::constant(Quantity::new(q(0).amount, energy)),
         )],
     });
     let mut engine = Engine::new(declaration).unwrap();
@@ -301,15 +461,13 @@ fn coupled_conversion_resolves_tiny_release_beside_huge_rest_stock() {
     supply_stock(
         &mut engine,
         spec("fuel"),
-        Quantity::new(huge.clone(), material.clone()),
+        Quantity::new(huge.clone(), material),
         "supply",
     );
-    let mut electric = spec("electric");
-    electric.dimension = energy.clone();
     supply_stock(
         &mut engine,
-        electric,
-        Quantity::new(q(0).amount, energy.clone()),
+        kind_spec("electric", energy),
+        Quantity::new(q(0).amount, energy),
         "energy-supply",
     );
     let mut proposal = Exchange::new("convert", "conversion");
@@ -344,10 +502,14 @@ fn law_dimension_unknown_boundary_and_bad_coefficients_are_rejected() {
     let mut invalid_model = model();
     invalid_model.laws[1]
         .slots
-        .insert("a".into(), Dimension::base("energy").unwrap());
+        .insert("a".into(), TestKind::Energy);
     assert!(matches!(
         Engine::new(invalid_model),
-        Err(Error::Dimension { .. })
+        Err(Error::Kinds {
+            context: KindContext::Constraint { .. },
+            expected: TestKind::Energy,
+            found: TestKind::Material,
+        })
     ));
     let mut engine = Engine::new(model()).unwrap();
     for (id, amount) in [("a", 10), ("b", 10), ("out", 0)] {
@@ -371,7 +533,7 @@ fn evaluated_facts_are_owned_and_bound_to_exact_proposal_and_revision() {
         "limit".into(),
         Fact {
             owner: "journal".into(),
-            dimension: q(0).dimension,
+            kind: TestKind::Material,
         },
     );
     let mut limit = equation("owner-limit", Expr::delta("out"), Expr::fact("limit"));
@@ -436,7 +598,7 @@ fn topology_preserves_quantity_identity_and_retires_only_accounted_empty_stocks(
     assert!(
         matches!(engine.prepare(reuse, vec![]), Err(Error::Invalid(message)) if message.contains("already used"))
     );
-    let restored = Engine::restore(&engine.snapshot().unwrap()).unwrap();
+    let restored = Engine::restore(&engine.snapshot().unwrap(), &TestKinds).unwrap();
     assert_eq!(restored.stock("out").unwrap().owner, "journal");
 }
 
@@ -476,21 +638,49 @@ fn restore_revalidates_history_and_does_not_accept_unaccounted_balances() {
     let mut snapshot: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     snapshot["version"] = serde_json::json!(999);
     assert!(matches!(
-        Engine::restore(&serde_json::to_vec(&snapshot).unwrap()),
-        Err(Error::Snapshot(_))
+        Engine::restore(&serde_json::to_vec(&snapshot).unwrap(), &TestKinds),
+        Err(Error::UnsupportedSnapshot { version: 999 })
     ));
-    snapshot["version"] = serde_json::json!(2);
+    snapshot["version"] = serde_json::json!(3);
     snapshot["requests"][0]["exchange"]["boundaries"] = serde_json::json!({});
     assert!(matches!(
-        Engine::restore(&serde_json::to_vec(&snapshot).unwrap()),
+        Engine::restore(&serde_json::to_vec(&snapshot).unwrap(), &TestKinds),
         Err(Error::Constraint { .. })
     ));
     let mut snapshot: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     snapshot["balances"] = serde_json::json!({"a": 1000});
     assert!(matches!(
-        Engine::restore(&serde_json::to_vec(&snapshot).unwrap()),
+        Engine::restore(&serde_json::to_vec(&snapshot).unwrap(), &TestKinds),
         Err(Error::Snapshot(_))
     ));
+}
+
+#[test]
+fn snapshot_v3_names_kinds_and_rejects_other_versions() {
+    let mut engine = Engine::new(model()).unwrap();
+    supply(&mut engine, "a", 10);
+    let bytes = engine.snapshot().unwrap();
+    let text = String::from_utf8(bytes.clone()).unwrap();
+    assert!(text.contains("\"version\":3"));
+    assert!(text.contains("\"kind\":\"material\""));
+    let restored = Engine::restore(&bytes, &TestKinds).unwrap();
+    assert_eq!(restored.snapshot().unwrap(), bytes);
+    for version in [2, 999] {
+        let mut snapshot: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        snapshot["version"] = serde_json::json!(version);
+        assert_eq!(
+            Engine::restore(&serde_json::to_vec(&snapshot).unwrap(), &TestKinds).err(),
+            Some(Error::UnsupportedSnapshot { version })
+        );
+    }
+    let mut snapshot: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    snapshot["requests"][0]["exchange"]["creates"][0]["kind"] = serde_json::json!("unknown");
+    assert_eq!(
+        Engine::restore(&serde_json::to_vec(&snapshot).unwrap(), &TestKinds).err(),
+        Some(Error::UnknownKind {
+            name: "unknown".into()
+        })
+    );
 }
 
 #[test]
@@ -498,11 +688,10 @@ fn nonlinear_derived_constraint_checks_motion_without_a_second_energy_stock() {
     let mut declaration = model();
     let mut nonlinear = declaration.laws[0].clone();
     nonlinear.id = "bounded-square".into();
-    let squared = q(0).dimension.product(&q(0).dimension).unwrap();
     let mut constraint = equation(
         "square-budget",
         Expr::after("stock").product(Expr::after("stock")),
-        Expr::constant(Quantity::new(q(25).amount, squared)),
+        Expr::constant(Quantity::new(q(25).amount, TestKind::MaterialSquared)),
     );
     constraint.relation = Relation::LessOrEqual;
     nonlinear.constraints.push(constraint);
@@ -525,7 +714,7 @@ fn foreign_preparation_and_participation_do_not_cross_engine_boundaries() {
     for (id, amount) in [("a", 10), ("b", 10), ("out", 0)] {
         supply(&mut first, id, amount);
     }
-    let mut second = Engine::restore(&first.snapshot().unwrap()).unwrap();
+    let mut second = Engine::restore(&first.snapshot().unwrap(), &TestKinds).unwrap();
     let proposal = combine("foreign", 2);
     let participation = journal(&first, &proposal);
     assert!(matches!(
@@ -616,7 +805,7 @@ fn record_updates_are_canonical_state_and_restore_preserves_them() {
         .unwrap();
     let prepared = engine.prepare(update, vec![part]).unwrap();
     engine.publish(prepared).unwrap();
-    let restored = Engine::restore(&engine.snapshot().unwrap()).unwrap();
+    let restored = Engine::restore(&engine.snapshot().unwrap(), &TestKinds).unwrap();
     assert_eq!(
         restored.record("journal", "committed"),
         Some(b"reconciled".as_slice())
@@ -634,10 +823,10 @@ proptest::proptest! {
         if draw <= a && draw <= b {
             engine.publish(attempt.unwrap()).unwrap();
             proptest::prop_assert_eq!(engine.amount("a").unwrap() + engine.amount("b").unwrap() + engine.amount("out").unwrap(), q(a + b).amount);
-            let restored = Engine::restore(&engine.snapshot().unwrap()).unwrap();
+            let restored = Engine::restore(&engine.snapshot().unwrap(), &TestKinds).unwrap();
             proptest::prop_assert_eq!(restored.snapshot().unwrap(), engine.snapshot().unwrap());
         } else {
-            proptest::prop_assert!(matches!(attempt, Err(Error::Domain { .. })), "shortage must reject the entire exchange");
+            proptest::prop_assert!(matches!(attempt, Err(Error::BelowFloor { .. })), "shortage must reject the entire exchange");
             proptest::prop_assert_eq!(engine.snapshot().unwrap(), before);
         }
     }

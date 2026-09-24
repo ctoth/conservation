@@ -4,7 +4,7 @@ Exact conservation-law derivation and trace evidence for typed quantitative syst
 
 This Cargo workspace contains the following library crates:
 
-- `conservation-core` defines validated typed axis and kind identifiers, exact
+- `conservation-core` defines validated typed axis identifiers, the kind trait, exact
   rational balance laws, and origin metadata tags. Origin metadata records how
   a law is asserted to have arisen; it is not a correctness certificate.
 - `conservation-linear` derives deterministic left-nullspace bases from integer
@@ -26,7 +26,7 @@ This Cargo workspace contains the following library crates:
   errors. Trace witnesses do not inherit derivation-origin metadata.
 - `conservation-stock-flow` compiles exact stock-flow carriers and checks
   transition and boundary evidence without reimplementing settlement.
-- `conservation-exchange` owns exact coupled transformations, signed coordinates,
+- `conservation-exchange` owns exact coupled transformations, floors from the kind,
   capacities, immutable participant records and atomic prepare/publish. It does
   not proportionally limit individual legs. See its [contract and Python API](conservation-exchange/README.md).
 

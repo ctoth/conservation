@@ -5,6 +5,7 @@
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
+use std::hash::Hash;
 use std::sync::LazyLock;
 
 use num_rational::BigRational;
@@ -33,13 +34,76 @@ impl fmt::Display for IdentifierError {
 
 impl Error for IdentifierError {}
 
+/// Rejects empty or whitespace-only identifiers. The one declaration of that rule.
+pub fn nonblank(value: &str) -> Result<(), IdentifierError> {
+    if value.trim().is_empty() {
+        Err(IdentifierError::Blank)
+    } else {
+        Ok(())
+    }
+}
+
+/// How a kind's values combine.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum Affine<K> {
+    /// Values and their differences share this kind (mass, energy, money).
+    Linear,
+    /// Values are points; the difference of two points has kind `difference`
+    /// (temperature and temperature_delta).
+    Point { difference: K },
+}
+
+/// A conserved kind: a small `Copy` handle into a registry shared by every stock,
+/// flow and law that names it. `Display` writes the kind's registry name, the
+/// identity [`KindRegistry::resolve`] accepts.
+pub trait Kind: Copy + Eq + Ord + Hash + fmt::Debug + fmt::Display {
+    /// Whether this is a point kind, and which kind its differences have.
+    fn affine(self) -> Affine<Self>;
+    /// The least coordinate a stock of this kind may hold, in the kind's chart;
+    /// `None` when the kind has no floor.
+    fn floor(self) -> Option<BigRational>;
+    /// The kind of a difference of two values of this kind.
+    fn difference(self) -> Self {
+        match self.affine() {
+            Affine::Linear => self,
+            Affine::Point { difference } => difference,
+        }
+    }
+}
+
+/// Dimensional comparison, product and quotient. Only conservation-exchange requires it.
+pub trait DimensionAlgebra: Kind {
+    /// A kind's dimensions. Equality is dimensional comparison.
+    type Dimensions: Clone + Eq + fmt::Debug + fmt::Display;
+    /// Why a product or quotient has no representation (for example exponent overflow).
+    type AlgebraError: Error + Clone + Eq;
+    /// Returns this kind's dimensions.
+    fn dimensions(self) -> Self::Dimensions;
+    /// Returns the dimensions of a product.
+    fn product(
+        left: &Self::Dimensions,
+        right: &Self::Dimensions,
+    ) -> Result<Self::Dimensions, Self::AlgebraError>;
+    /// Returns the dimensions of a quotient.
+    fn quotient(
+        left: &Self::Dimensions,
+        right: &Self::Dimensions,
+    ) -> Result<Self::Dimensions, Self::AlgebraError>;
+}
+
+/// Resolves kind names once, at a document or foreign-language boundary.
+pub trait KindRegistry {
+    /// The handle type this registry resolves names to.
+    type Kind: Kind;
+    /// The handle whose `Display` is `name`, if the registry declares it.
+    fn resolve(&self, name: &str) -> Option<Self::Kind>;
+}
+
 impl AxisId {
     /// Creates an axis identifier.
     pub fn new(value: impl Into<String>) -> Result<Self, IdentifierError> {
         let value = value.into();
-        if value.trim().is_empty() {
-            return Err(IdentifierError::Blank);
-        }
+        nonblank(&value)?;
         Ok(Self(value))
     }
 
@@ -50,32 +114,6 @@ impl AxisId {
 }
 
 impl fmt::Display for AxisId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(formatter)
-    }
-}
-
-/// Identifies the physical or logical kind measured by a law.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct KindId(String);
-
-impl KindId {
-    /// Creates a kind identifier.
-    pub fn new(value: impl Into<String>) -> Result<Self, IdentifierError> {
-        let value = value.into();
-        if value.trim().is_empty() {
-            return Err(IdentifierError::Blank);
-        }
-        Ok(Self(value))
-    }
-
-    /// Returns the identifier text.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for KindId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(formatter)
     }
@@ -102,8 +140,8 @@ pub enum Provenance {
 
 /// A canonical exact linear balance law over named axes.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct BalanceLaw {
-    kind: KindId,
+pub struct BalanceLaw<K> {
+    kind: K,
     coefficients: BTreeMap<AxisId, BigRational>,
     provenance: Provenance,
 }
@@ -125,10 +163,10 @@ impl fmt::Display for BalanceLawError {
 
 impl Error for BalanceLawError {}
 
-impl BalanceLaw {
+impl<K: Kind> BalanceLaw<K> {
     /// Constructs a law, combining repeated axes and discarding exact zero terms.
     pub fn new(
-        kind: KindId,
+        kind: K,
         coefficients: impl IntoIterator<Item = (AxisId, BigRational)>,
         provenance: Provenance,
     ) -> Result<Self, BalanceLawError> {
@@ -150,8 +188,8 @@ impl BalanceLaw {
     }
 
     /// Returns the kind conserved by this law.
-    pub fn kind(&self) -> &KindId {
-        &self.kind
+    pub fn kind(&self) -> K {
+        self.kind
     }
 
     /// Returns an axis coefficient, or exact zero when the axis is absent.
@@ -202,19 +240,19 @@ impl fmt::Display for Grade {
 /// authority constraints are [`Grade::Nonnegative`] sentences, and monotone
 /// dissipation axes are [`Grade::Nondecreasing`] sentences.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct GradedLaw {
-    form: BalanceLaw,
+pub struct GradedLaw<K> {
+    form: BalanceLaw<K>,
     grade: Grade,
 }
 
-impl GradedLaw {
+impl<K: Kind> GradedLaw<K> {
     /// Constructs a graded sentence over an already-canonical form.
-    pub fn new(form: BalanceLaw, grade: Grade) -> Self {
+    pub fn new(form: BalanceLaw<K>, grade: Grade) -> Self {
         Self { form, grade }
     }
 
     /// Returns the exact linear form this sentence reads.
-    pub fn form(&self) -> &BalanceLaw {
+    pub fn form(&self) -> &BalanceLaw<K> {
         &self.form
     }
 
@@ -224,9 +262,9 @@ impl GradedLaw {
     }
 }
 
-impl From<BalanceLaw> for GradedLaw {
+impl<K: Kind> From<BalanceLaw<K>> for GradedLaw<K> {
     /// Reads a balance law under its classic grade, [`Grade::Invariant`].
-    fn from(form: BalanceLaw) -> Self {
+    fn from(form: BalanceLaw<K>) -> Self {
         Self::new(form, Grade::Invariant)
     }
 }

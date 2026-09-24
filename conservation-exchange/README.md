@@ -7,8 +7,10 @@ there is no Python settlement implementation or numeric fallback.
 
 ## Model and authority
 
-`Model` registers owners, dimensional capacity constraints and `Law`s. An engine
-starts empty. Creating and funding a stock is an ordinary recorded exchange
+`Model` registers owners, dimensional capacity constraints and `Law`s. Every
+quantity, stock, slot, boundary and fact names a kind: a handle implementing
+`conservation_core::DimensionAlgebra`, which reports the kind's dimensions,
+floor and difference kind. An engine starts empty. Creating and funding a stock is an ordinary recorded exchange
 against a declared boundary-input law, not an unrestricted initial-balance setter.
 
 An exchange may carry `declarations: Model` with additional owners, laws and
@@ -25,12 +27,20 @@ a hold's constraint, declare a new capacity and reassign its stocks in one
 exchange; the resulting contents are checked before publication. Authorization
 to declare model definitions remains the trusted consumer's responsibility.
 
-A `Stock` has a permanent identity, an owner, a dimension, a nonnegative or signed
-domain, and capacity weights. A weight converts stock units to a capacity unit:
+A `Stock` has a permanent identity, an owner, a kind and capacity weights. The
+kind's floor bounds the stock: an exchange that leaves it below the floor is
+refused with `BelowFloor`, which names the stock and kind. A kind with no floor
+is a signed coordinate. A weight converts stock units to a capacity unit:
 for example, a volume constraint can use a domain-supplied reciprocal density.
 Capacity checks sum **resulting** contents, so consumption can release space for
-products in the same exchange. Capacity weights must be nonnegative; signed
-coordinates do not participate in these storage constraints.
+products in the same exchange. Capacity weights must be nonnegative, and only a
+stock whose kind has a nonnegative floor may carry them; signed coordinates do
+not participate in these storage constraints.
+
+A leg, delta, boundary or fact value must have its slot's, port's or fact's kind
+(a delta: the slot kind's difference). A mismatch is refused with `Kinds`, which
+names both kinds, even when the two kinds have equal dimensions. Products and
+quotients derive dimensions, and a derived quantity is compared by dimensions.
 
 A law declares stock roles, signed boundary inputs, required participants,
 evaluated facts and constraints. An `Exchange` binds each role to a distinct
@@ -86,7 +96,7 @@ under this owner contract or supply a separately proven publication mechanism.
 Domain-only record exchanges may use a law with no stock roles and required
 participants. Omitting a required participant rejects the request.
 
-Facts have declared owners and dimensions. `Participation` captures their values
+Facts have declared owners and kinds. `Participation` captures their values
 with the full proposal and source root, preventing substitution into another
 request or use after an intervening commit. The kernel checks those associations
 and the declared equations; it does not independently recompute an external domain
@@ -97,14 +107,17 @@ law. Put reproducible arithmetic in the expression language when possible.
 All execution uses arbitrary-precision `BigRational`. Python accepts integer or
 fraction strings (for example `"17"` and `"1/1000"`), never implicit floats,
 decimal rounding, NaN or infinity. Python `Quantity.fraction` returns the exact
-canonical value. Dimensions use integer exponents over application-defined base
-dimensions; product and quotient check exponent overflow. Display-unit conversion
-is the application's responsibility before supplying canonical quantities.
+canonical value. Python kinds come from a `KindRegistry`, whose declarations give
+each kind integer exponents over application-defined base dimensions, an optional
+exact floor and, for a point kind, its difference kind; product and quotient check
+exponent overflow. Display-unit conversion is the application's responsibility
+before supplying canonical quantities.
 
 Expressions support exact constants; before/after/delta stock-role values;
 declared boundary inputs and owner facts; sums, products and quotients. Addition
-and comparisons require matching dimensions. Products and quotients derive their
-dimensions, including dimensioned conversion coefficients. Division by zero is an
+and comparisons of two kinds require the same kind. Products and quotients derive
+their dimensions, including dimensioned conversion coefficients, and a comparison
+with a derived side requires matching dimensions. Division by zero is an
 error. Nesting above 64 and unknown expression variants are rejected.
 
 This covers linear transforms and evaluated nonlinear algebra such as `p*p/(2*m)`.
@@ -117,7 +130,7 @@ introduce an independently spendable duplicate kinetic-energy stock.
 Each equality or upper-bound constraint has exact rational absolute and relative
 tolerances. Absolute tolerance is expressed in the comparison's derived canonical
 unit. Both default to zero; relative tolerance must be in `[0, 1)`. The threshold
-is `absolute + relative * max(abs(left), abs(right))`. Domain and capacity bounds
+is `absolute + relative * max(abs(left), abs(right))`. Floor and capacity bounds
 are strict, with no clamping. Errors identify the failed exchange/constraint or
 stock/capacity and exact residual. Model authors remain responsible for selecting
 tolerances small enough to resolve the signal; the tests include a `9/100` energy
@@ -138,13 +151,16 @@ Creation, zero-balance removal and ownership/capacity reassignment are part of a
 exchange. Removal requires an accounted final zero; retired stock IDs cannot be
 reused. Reassignment preserves identity and quantity and rechecks all capacities.
 
-Snapshot format 2 contains the initial model and ordered canonical committed requests,
-including runtime declarations in the exact exchange that committed them.
-Restore replays and revalidates them, rebuilding quantities, revisions, retired
-IDs, records, receipts and boundary evidence once. It never accepts separately
-serialized balances. The input is trusted model/history, not an authenticated or
-tamper-proof artifact. Unsupported versions, unknown fields and invalid transitions
-are rejected; no legacy reader is provided.
+Snapshot format 3 contains the initial model and ordered canonical committed requests,
+including runtime declarations in the exact exchange that committed them. Each
+kind is written as its registry name, for example `{"amount": ..., "kind": "mass"}`;
+kind declarations are not stored. Restore needs a kind registry: it reads the
+version first, resolves every name once through that registry (an unknown name is
+`UnknownKind`), then replays and revalidates the requests, rebuilding quantities,
+revisions, retired IDs, records, receipts and boundary evidence once. It never
+accepts separately serialized balances. The input is trusted model/history, not
+an authenticated or tamper-proof artifact. Unsupported versions (including format
+2), unknown fields and invalid transitions are rejected; no legacy reader is provided.
 
 Preparations are not serialized. Restoring creates a fresh process-local lineage,
 so a pre-restore preparation cannot publish even at an equal revision. Prepare it
@@ -157,9 +173,13 @@ history claim. This is distinct from snapshotting foreign objects for rollback.
 ## Python example
 
 ```python
-from conservation_exchange import Constraint, Dimension, Engine, Exchange, Expr, Law, Quantity, Stock
+from conservation_exchange import (
+    Constraint, Engine, Exchange, Expr, KindDeclaration, KindRegistry, Law, Quantity, Stock,
+)
 
-kg = Dimension("mass")
+# A registry lives until the process exits; build one per application.
+registry = KindRegistry({"mass": KindDeclaration({"mass": 1}, floor="0")})
+kg = registry.kind("mass")
 supply = Law(
     "supply", {"stock": kg},
     [Constraint("balance", Expr.delta("stock"), Expr.boundary("source"))],
@@ -175,7 +195,7 @@ request = Exchange(
 receipt = engine.publish(engine.prepare(request))
 assert engine.amount("fuel").fraction == "3/2"
 assert engine.publish(engine.prepare(request)) == receipt
-restored = Engine.restore(engine.snapshot())
+restored = Engine.restore(engine.snapshot(), registry)
 assert restored.amount("fuel") == engine.amount("fuel")
 ```
 

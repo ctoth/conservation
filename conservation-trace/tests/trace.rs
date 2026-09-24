@@ -1,4 +1,5 @@
-use conservation_core::{AxisId, BalanceLaw, Grade, GradedLaw, KindId, Provenance};
+use conservation_core::{AxisId, BalanceLaw, Grade, GradedLaw, Provenance};
+use conservation_test_kinds::TestKind;
 use conservation_trace::{
     LawVerdict, LawViolation, LawWitness, NondecreasingWitness, NonnegativeWitness, TraceError,
     TraceState, TraceStateError, TraceVerdict, ViolatedBalance, check_law, check_trace,
@@ -11,17 +12,13 @@ fn axis(value: &str) -> AxisId {
     AxisId::new(value).unwrap()
 }
 
-fn kind(value: &str) -> KindId {
-    KindId::new(value).unwrap()
-}
-
 fn q(value: i64) -> BigRational {
     BigRational::from_integer(BigInt::from(value))
 }
 
-fn total_law(a: &AxisId, b: &AxisId) -> BalanceLaw {
+fn total_law(a: &AxisId, b: &AxisId) -> BalanceLaw<TestKind> {
     BalanceLaw::new(
-        kind("amount"),
+        TestKind::Amount,
         [(a.clone(), q(1)), (b.clone(), q(1))],
         Provenance::Declared,
     )
@@ -65,7 +62,7 @@ fn fractional_conserved_trace_returns_a_witness_without_origin_metadata() {
     let b = axis("B");
     let half = BigRational::new(BigInt::from(1), BigInt::from(2));
     let law = BalanceLaw::new(
-        kind("amount"),
+        TestKind::Amount,
         [(a.clone(), half.clone()), (b.clone(), half)],
         Provenance::ForcedBalance,
     )
@@ -87,13 +84,13 @@ fn fractional_conserved_trace_returns_a_witness_without_origin_metadata() {
         witness.conserved_value,
         BigRational::new(BigInt::from(3), BigInt::from(2))
     );
-    assert_eq!(witness.kind, kind("amount"));
+    assert_eq!(witness.kind, TestKind::Amount);
 }
 
 #[test]
 fn empty_and_single_state_traces_are_structural_errors() {
     let a = axis("A");
-    let law = BalanceLaw::new(kind("amount"), [(a.clone(), q(1))], Provenance::Declared).unwrap();
+    let law = BalanceLaw::new(TestKind::Amount, [(a.clone(), q(1))], Provenance::Declared).unwrap();
 
     assert_eq!(
         check_trace(&law, &[]),
@@ -167,7 +164,7 @@ fn invariant_grade_agrees_with_check_trace_in_both_outcomes() {
 fn nonnegative_grade_admits_zero_and_reports_the_first_negative_state() {
     let a = axis("A");
     let law = GradedLaw::new(
-        BalanceLaw::new(kind("amount"), [(a.clone(), q(1))], Provenance::Declared).unwrap(),
+        BalanceLaw::new(TestKind::Amount, [(a.clone(), q(1))], Provenance::Declared).unwrap(),
         Grade::Nonnegative,
     );
 
@@ -182,7 +179,7 @@ fn nonnegative_grade_admits_zero_and_reports_the_first_negative_state() {
         NonnegativeWitness {
             states_checked: 3,
             minimum: q(0),
-            kind: kind("amount"),
+            kind: TestKind::Amount,
         }
     );
 
@@ -209,7 +206,7 @@ fn nonnegative_grade_admits_zero_and_reports_the_first_negative_state() {
 fn nondecreasing_grade_admits_plateaus_and_reports_the_first_decrease() {
     let a = axis("A");
     let law = GradedLaw::new(
-        BalanceLaw::new(kind("entropy"), [(a.clone(), q(1))], Provenance::Declared).unwrap(),
+        BalanceLaw::new(TestKind::Entropy, [(a.clone(), q(1))], Provenance::Declared).unwrap(),
         Grade::Nondecreasing,
     );
 
@@ -225,7 +222,7 @@ fn nondecreasing_grade_admits_plateaus_and_reports_the_first_decrease() {
             states_checked: 3,
             initial: q(1),
             last: q(4),
-            kind: kind("entropy"),
+            kind: TestKind::Entropy,
         }
     );
 

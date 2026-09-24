@@ -2,7 +2,7 @@ use std::ops::{Add, Div, Mul, Sub};
 use std::sync::Arc;
 use std::{fmt, mem};
 
-use conservation_core::KindId;
+use conservation_core::Kind;
 use num_rational::BigRational;
 use num_traits::{One, Signed, Zero};
 
@@ -10,13 +10,13 @@ use crate::{AppliedFlow, FlowTopology, SettlementReport, StockFlowError, StockId
 
 /// Applied amounts from one compiled settlement, indexed like the topology's flows.
 #[derive(Clone)]
-pub struct CompiledSettlementReport<N> {
-    topology: Arc<FlowTopology>,
+pub struct CompiledSettlementReport<N, K> {
+    topology: Arc<FlowTopology<K>>,
     requested: Vec<N>,
     applied: Vec<N>,
 }
 
-impl<N: fmt::Debug> fmt::Debug for CompiledSettlementReport<N> {
+impl<N: fmt::Debug, K: Kind> fmt::Debug for CompiledSettlementReport<N, K> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("CompiledSettlementReport")
@@ -26,13 +26,13 @@ impl<N: fmt::Debug> fmt::Debug for CompiledSettlementReport<N> {
     }
 }
 
-impl<N: PartialEq> PartialEq for CompiledSettlementReport<N> {
+impl<N: PartialEq, K: Kind> PartialEq for CompiledSettlementReport<N, K> {
     fn eq(&self, other: &Self) -> bool {
         self.requested == other.requested && self.applied == other.applied
     }
 }
 
-impl<N> CompiledSettlementReport<N> {
+impl<N, K: Kind> CompiledSettlementReport<N, K> {
     /// Requested amounts in stable flow-slot order.
     pub fn requested(&self) -> &[N] {
         &self.requested
@@ -44,15 +44,15 @@ impl<N> CompiledSettlementReport<N> {
     }
 }
 
-impl FlowTopology {
+impl<K: Kind> FlowTopology<K> {
     /// Restores identifier-rich exact flows from a compiled settlement report.
     ///
     /// The report must originate from a structurally equal topology; equal
     /// vector lengths alone are not sufficient compatibility evidence.
     pub fn materialize_exact_report(
         &self,
-        report: &CompiledSettlementReport<BigRational>,
-    ) -> Result<SettlementReport, StockFlowError> {
+        report: &CompiledSettlementReport<BigRational, K>,
+    ) -> Result<SettlementReport<K>, StockFlowError<K>> {
         if self != report.topology.as_ref()
             || self.flows().len() != report.requested.len()
             || report.requested.len() != report.applied.len()
@@ -65,7 +65,7 @@ impl FlowTopology {
             .zip(report.requested.iter().zip(&report.applied))
             .map(|(flow, (requested, applied))| AppliedFlow {
                 process: self.processes()[flow.process()].clone(),
-                kind: self.kinds()[flow.kind()].clone(),
+                kind: self.kinds()[flow.kind()],
                 source: flow.source().map(|index| self.stocks()[index].clone()),
                 target: flow.target().map(|index| self.stocks()[index].clone()),
                 requested: requested.clone(),
@@ -120,20 +120,20 @@ impl Default for DenseTolerance {
 
 /// Exact mutable amounts and boundary accounts over an immutable topology.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ExactState {
-    topology: Arc<FlowTopology>,
+pub struct ExactState<K> {
+    topology: Arc<FlowTopology<K>>,
     amounts: Vec<BigRational>,
     initial: Vec<BigRational>,
     inputs: Vec<BigRational>,
     outputs: Vec<BigRational>,
 }
 
-impl ExactState {
+impl<K: Kind> ExactState<K> {
     /// Creates exact state from amounts in stable stock-index order.
     pub fn new(
-        topology: Arc<FlowTopology>,
+        topology: Arc<FlowTopology<K>>,
         amounts: Vec<BigRational>,
-    ) -> Result<Self, StockFlowError> {
+    ) -> Result<Self, StockFlowError<K>> {
         validate_count(topology.stocks().len(), amounts.len())?;
         if amounts.iter().any(Signed::is_negative) {
             return Err(StockFlowError::NegativeAmount);
@@ -150,7 +150,7 @@ impl ExactState {
     }
 
     /// Shared immutable topology.
-    pub fn topology(&self) -> &Arc<FlowTopology> {
+    pub fn topology(&self) -> &Arc<FlowTopology<K>> {
         &self.topology
     }
 
@@ -167,7 +167,7 @@ impl ExactState {
     }
 
     /// Current total of a conserved kind.
-    pub fn total(&self, kind: &KindId) -> BigRational {
+    pub fn total(&self, kind: K) -> BigRational {
         self.topology
             .kind_index(kind)
             .map(|index| totals(&self.topology, &self.amounts)[index].clone())
@@ -175,17 +175,17 @@ impl ExactState {
     }
 
     /// Cumulative boundary input of a conserved kind.
-    pub fn inputs(&self, kind: &KindId) -> BigRational {
+    pub fn inputs(&self, kind: K) -> BigRational {
         self.account(kind, &self.inputs)
     }
 
     /// Cumulative boundary output of a conserved kind.
-    pub fn outputs(&self, kind: &KindId) -> BigRational {
+    pub fn outputs(&self, kind: K) -> BigRational {
         self.account(kind, &self.outputs)
     }
 
     /// `initial + inputs - outputs - current`, exactly.
-    pub fn balance_residual(&self, kind: &KindId) -> BigRational {
+    pub fn balance_residual(&self, kind: K) -> BigRational {
         self.topology
             .kind_index(kind)
             .map_or_else(BigRational::zero, |index| {
@@ -199,7 +199,7 @@ impl ExactState {
     pub fn settle(
         &mut self,
         requested: &[BigRational],
-    ) -> Result<CompiledSettlementReport<BigRational>, StockFlowError> {
+    ) -> Result<CompiledSettlementReport<BigRational, K>, StockFlowError<K>> {
         validate_count(self.topology.flows().len(), requested.len())?;
         if requested.iter().any(Signed::is_negative) {
             return Err(StockFlowError::NegativeAmount);
@@ -216,7 +216,7 @@ impl ExactState {
         })
     }
 
-    fn account(&self, kind: &KindId, accounts: &[BigRational]) -> BigRational {
+    fn account(&self, kind: K, accounts: &[BigRational]) -> BigRational {
         self.topology
             .kind_index(kind)
             .map(|index| accounts[index].clone())
@@ -228,8 +228,8 @@ impl ExactState {
 ///
 /// Every stored value is finite and nonnegative. A settlement that would
 /// overflow is rejected before the state is changed.
-pub struct DenseState {
-    topology: Arc<FlowTopology>,
+pub struct DenseState<K> {
+    topology: Arc<FlowTopology<K>>,
     amounts: Vec<f64>,
     initial: Vec<f64>,
     inputs: Vec<f64>,
@@ -237,7 +237,7 @@ pub struct DenseState {
     scratch: DenseScratch,
 }
 
-impl Clone for DenseState {
+impl<K: Kind> Clone for DenseState<K> {
     fn clone(&self) -> Self {
         Self {
             topology: self.topology.clone(),
@@ -250,7 +250,7 @@ impl Clone for DenseState {
     }
 }
 
-impl fmt::Debug for DenseState {
+impl<K: Kind> fmt::Debug for DenseState<K> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("DenseState")
@@ -263,7 +263,7 @@ impl fmt::Debug for DenseState {
     }
 }
 
-impl PartialEq for DenseState {
+impl<K: Kind> PartialEq for DenseState<K> {
     fn eq(&self, other: &Self) -> bool {
         self.topology == other.topology
             && self.amounts == other.amounts
@@ -273,9 +273,12 @@ impl PartialEq for DenseState {
     }
 }
 
-impl DenseState {
+impl<K: Kind> DenseState<K> {
     /// Creates dense state from amounts in stable stock-index order.
-    pub fn new(topology: Arc<FlowTopology>, amounts: Vec<f64>) -> Result<Self, StockFlowError> {
+    pub fn new(
+        topology: Arc<FlowTopology<K>>,
+        amounts: Vec<f64>,
+    ) -> Result<Self, StockFlowError<K>> {
         validate_count(topology.stocks().len(), amounts.len())?;
         validate_dense(&amounts)?;
         let initial = totals(&topology, &amounts);
@@ -293,7 +296,7 @@ impl DenseState {
     }
 
     /// Shared immutable topology.
-    pub fn topology(&self) -> &Arc<FlowTopology> {
+    pub fn topology(&self) -> &Arc<FlowTopology<K>> {
         &self.topology
     }
 
@@ -310,7 +313,7 @@ impl DenseState {
     }
 
     /// Current total of a conserved kind.
-    pub fn total(&self, kind: &KindId) -> f64 {
+    pub fn total(&self, kind: K) -> f64 {
         self.topology
             .kind_index(kind)
             .map(|index| totals(&self.topology, &self.amounts)[index])
@@ -318,17 +321,17 @@ impl DenseState {
     }
 
     /// Cumulative boundary input of a conserved kind.
-    pub fn inputs(&self, kind: &KindId) -> f64 {
+    pub fn inputs(&self, kind: K) -> f64 {
         self.account(kind, &self.inputs)
     }
 
     /// Cumulative boundary output of a conserved kind.
-    pub fn outputs(&self, kind: &KindId) -> f64 {
+    pub fn outputs(&self, kind: K) -> f64 {
         self.account(kind, &self.outputs)
     }
 
     /// Floating-point `initial + inputs - outputs - current`.
-    pub fn balance_residual(&self, kind: &KindId) -> f64 {
+    pub fn balance_residual(&self, kind: K) -> f64 {
         self.topology.kind_index(kind).map_or(0.0, |index| {
             stable_residual(
                 [self.initial[index], self.inputs[index]],
@@ -338,7 +341,7 @@ impl DenseState {
     }
 
     /// Tests the balance residual against an error budget scaled to all terms.
-    pub fn balance_within(&self, kind: &KindId, tolerance: DenseTolerance) -> bool {
+    pub fn balance_within(&self, kind: K, tolerance: DenseTolerance) -> bool {
         if !tolerance.absolute.is_finite()
             || !tolerance.relative.is_finite()
             || tolerance.absolute < 0.0
@@ -372,7 +375,7 @@ impl DenseState {
     pub fn settle(
         &mut self,
         requested: &[f64],
-    ) -> Result<CompiledSettlementReport<f64>, StockFlowError> {
+    ) -> Result<CompiledSettlementReport<f64, K>, StockFlowError<K>> {
         self.settle_reusing_scratch(requested)?;
         Ok(CompiledSettlementReport {
             topology: self.topology.clone(),
@@ -385,11 +388,11 @@ impl DenseState {
     ///
     /// Applied values remain only in private reusable workspace and are
     /// overwritten by the next settlement.
-    pub fn settle_discard(&mut self, requested: &[f64]) -> Result<(), StockFlowError> {
+    pub fn settle_discard(&mut self, requested: &[f64]) -> Result<(), StockFlowError<K>> {
         self.settle_reusing_scratch(requested)
     }
 
-    fn settle_reusing_scratch(&mut self, requested: &[f64]) -> Result<(), StockFlowError> {
+    fn settle_reusing_scratch(&mut self, requested: &[f64]) -> Result<(), StockFlowError<K>> {
         validate_count(self.topology.flows().len(), requested.len())?;
         validate_dense(requested)?;
         compute_dense_batch(&self.topology, &self.amounts, requested, &mut self.scratch)?;
@@ -434,7 +437,7 @@ impl DenseState {
         Ok(())
     }
 
-    fn account(&self, kind: &KindId, accounts: &[f64]) -> f64 {
+    fn account(&self, kind: K, accounts: &[f64]) -> f64 {
         self.topology
             .kind_index(kind)
             .map(|index| accounts[index])
@@ -460,7 +463,7 @@ struct DenseScratch {
 }
 
 impl DenseScratch {
-    fn new(topology: &FlowTopology) -> Self {
+    fn new<K: Kind>(topology: &FlowTopology<K>) -> Self {
         let stock_count = topology.stocks().len();
         let kind_count = topology.kinds().len();
         let mut source_counts = vec![0; stock_count];
@@ -522,7 +525,7 @@ struct Batch<N> {
     applied: Vec<N>,
 }
 
-fn compute_batch<N>(topology: &FlowTopology, amounts: &[N], requested: &[N]) -> Batch<N>
+fn compute_batch<N, K: Kind>(topology: &FlowTopology<K>, amounts: &[N], requested: &[N]) -> Batch<N>
 where
     N: SettlementNumber,
 {
@@ -589,12 +592,12 @@ where
     }
 }
 
-fn compute_dense_batch(
-    topology: &FlowTopology,
+fn compute_dense_batch<K: Kind>(
+    topology: &FlowTopology<K>,
     amounts: &[f64],
     requested: &[f64],
     scratch: &mut DenseScratch,
-) -> Result<(), StockFlowError> {
+) -> Result<(), StockFlowError<K>> {
     clear_groups(&mut scratch.requested_terms);
     scratch.scales.clear();
     for (flow, amount) in topology.flows().iter().zip(requested) {
@@ -689,7 +692,7 @@ fn sum_dense_terms(terms: &mut [f64]) -> f64 {
     sum + correction
 }
 
-fn totals<N>(topology: &FlowTopology, amounts: &[N]) -> Vec<N>
+fn totals<N, K: Kind>(topology: &FlowTopology<K>, amounts: &[N]) -> Vec<N>
 where
     N: SettlementNumber,
 {
@@ -748,11 +751,11 @@ where
     }
 }
 
-fn checked_accounts_into(
+fn checked_accounts_into<K: Kind>(
     accounts: &[f64],
     increments: &[f64],
     values: &mut Vec<f64>,
-) -> Result<(), StockFlowError> {
+) -> Result<(), StockFlowError<K>> {
     values.clear();
     values.extend(
         accounts
@@ -764,8 +767,8 @@ fn checked_accounts_into(
     Ok(())
 }
 
-fn dense_totals_into(
-    topology: &FlowTopology,
+fn dense_totals_into<K: Kind>(
+    topology: &FlowTopology<K>,
     amounts: &[f64],
     terms: &mut [Vec<f64>],
     totals: &mut Vec<f64>,
@@ -777,7 +780,7 @@ fn dense_totals_into(
     sums_into(terms, totals);
 }
 
-fn validate_count(expected: usize, actual: usize) -> Result<(), StockFlowError> {
+fn validate_count<K: Kind>(expected: usize, actual: usize) -> Result<(), StockFlowError<K>> {
     if expected == actual {
         Ok(())
     } else {
@@ -785,7 +788,7 @@ fn validate_count(expected: usize, actual: usize) -> Result<(), StockFlowError> 
     }
 }
 
-fn validate_dense(amounts: &[f64]) -> Result<(), StockFlowError> {
+fn validate_dense<K: Kind>(amounts: &[f64]) -> Result<(), StockFlowError<K>> {
     validate_input_finite(amounts)?;
     if amounts.iter().any(|amount| *amount < 0.0) {
         return Err(StockFlowError::NegativeAmount);
@@ -793,7 +796,7 @@ fn validate_dense(amounts: &[f64]) -> Result<(), StockFlowError> {
     Ok(())
 }
 
-fn validate_input_finite(amounts: &[f64]) -> Result<(), StockFlowError> {
+fn validate_input_finite<K: Kind>(amounts: &[f64]) -> Result<(), StockFlowError<K>> {
     if amounts.iter().all(|amount| amount.is_finite()) {
         Ok(())
     } else {
@@ -801,7 +804,7 @@ fn validate_input_finite(amounts: &[f64]) -> Result<(), StockFlowError> {
     }
 }
 
-fn validate_intermediate(amounts: &[f64]) -> Result<(), StockFlowError> {
+fn validate_intermediate<K: Kind>(amounts: &[f64]) -> Result<(), StockFlowError<K>> {
     if amounts.iter().all(|amount| amount.is_finite()) {
         Ok(())
     } else {

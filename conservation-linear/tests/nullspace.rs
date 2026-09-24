@@ -1,5 +1,6 @@
-use conservation_core::{AxisId, KindId, Provenance};
+use conservation_core::{AxisId, Provenance};
 use conservation_linear::{MatrixError, NullspaceSource, TransitionMatrix, derive_left_nullspace};
+use conservation_test_kinds::TestKind;
 use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::Zero;
@@ -7,10 +8,6 @@ use proptest::prelude::*;
 
 fn axis(value: &str) -> AxisId {
     AxisId::new(value).unwrap()
-}
-
-fn kind(value: &str) -> KindId {
-    KindId::new(value).unwrap()
 }
 
 fn q(value: i64) -> BigRational {
@@ -74,7 +71,8 @@ fn integer_matrices() -> impl Strategy<Value = Vec<Vec<i16>>> {
 fn closed_flow_network_has_total_amount_conservation_law() {
     let axes = [axis("A"), axis("B"), axis("C")];
     let matrix = closed_flow_matrix(axes.clone());
-    let laws = derive_left_nullspace(&matrix, kind("amount"), NullspaceSource::Incidence).unwrap();
+    let laws =
+        derive_left_nullspace(&matrix, TestKind::Amount, NullspaceSource::Incidence).unwrap();
 
     assert_eq!(laws.len(), 1);
     assert_eq!(laws[0].provenance(), &Provenance::IncidenceNullspace);
@@ -90,8 +88,8 @@ fn jointly_permuted_axes_and_rows_produce_identical_named_laws() {
 
     assert_eq!(canonical.axes(), permuted.axes());
     assert_eq!(
-        derive_left_nullspace(&canonical, kind("amount"), NullspaceSource::Incidence).unwrap(),
-        derive_left_nullspace(&permuted, kind("amount"), NullspaceSource::Incidence).unwrap()
+        derive_left_nullspace(&canonical, TestKind::Amount, NullspaceSource::Incidence).unwrap(),
+        derive_left_nullspace(&permuted, TestKind::Amount, NullspaceSource::Incidence).unwrap()
     );
 }
 
@@ -109,7 +107,7 @@ fn rational_matrix_is_reduced_to_a_primitive_integer_vector_space_basis() {
     .unwrap();
 
     let laws =
-        derive_left_nullspace(&matrix, kind("charge"), NullspaceSource::Stoichiometric).unwrap();
+        derive_left_nullspace(&matrix, TestKind::Charge, NullspaceSource::Stoichiometric).unwrap();
 
     assert_eq!(laws.len(), 1);
     assert_eq!(laws[0].coefficient(&x), &q(2));
@@ -122,7 +120,8 @@ fn zero_matrix_has_one_canonical_law_per_axis() {
     let b = axis("B");
     let matrix =
         TransitionMatrix::new([a.clone(), b.clone()], vec![vec![q(0)], vec![q(0)]]).unwrap();
-    let laws = derive_left_nullspace(&matrix, kind("amount"), NullspaceSource::Incidence).unwrap();
+    let laws =
+        derive_left_nullspace(&matrix, TestKind::Amount, NullspaceSource::Incidence).unwrap();
 
     assert_eq!(laws.len(), 2);
     assert_eq!(laws[0].coefficient(&a), &q(1));
@@ -140,7 +139,7 @@ fn full_rank_matrix_has_no_conservation_law() {
     .unwrap();
 
     assert!(
-        derive_left_nullspace(&matrix, kind("amount"), NullspaceSource::Incidence)
+        derive_left_nullspace(&matrix, TestKind::Amount, NullspaceSource::Incidence)
             .unwrap()
             .is_empty()
     );
@@ -151,7 +150,8 @@ fn empty_transition_matrix_has_one_canonical_law_per_axis() {
     let a = axis("A");
     let b = axis("B");
     let matrix = TransitionMatrix::empty([b.clone(), a.clone()]).unwrap();
-    let laws = derive_left_nullspace(&matrix, kind("amount"), NullspaceSource::Incidence).unwrap();
+    let laws =
+        derive_left_nullspace(&matrix, TestKind::Amount, NullspaceSource::Incidence).unwrap();
 
     assert_eq!(matrix.axes(), &[a.clone(), b.clone()]);
     assert_eq!(matrix.transition_count(), 0);
@@ -170,7 +170,8 @@ fn dependent_rows_have_a_deterministic_multivector_basis() {
         vec![vec![q(1), q(2)], vec![q(2), q(4)], vec![q(3), q(6)]],
     )
     .unwrap();
-    let laws = derive_left_nullspace(&matrix, kind("amount"), NullspaceSource::Incidence).unwrap();
+    let laws =
+        derive_left_nullspace(&matrix, TestKind::Amount, NullspaceSource::Incidence).unwrap();
 
     assert_eq!(laws.len(), 2);
     assert_eq!(laws[0].coefficient(&a), &q(2));
@@ -221,7 +222,7 @@ proptest! {
         let matrix = TransitionMatrix::new(axes.clone(), entries.clone()).unwrap();
         let laws = derive_left_nullspace(
             &matrix,
-            kind("amount"),
+            TestKind::Amount,
             NullspaceSource::Stoichiometric,
         ).unwrap();
 
@@ -266,7 +267,7 @@ proptest! {
 
         let laws = derive_left_nullspace(
             &matrix,
-            kind("amount"),
+            TestKind::Amount,
             NullspaceSource::Stoichiometric,
         ).unwrap();
 

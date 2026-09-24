@@ -1,25 +1,25 @@
 use std::collections::BTreeMap;
 
-use conservation_core::KindId;
+use conservation_core::Kind;
 
 use crate::{FlowRole, ProcessId, StockFlowError, StockId};
 
 /// Immutable metadata for one stock in a compiled flow system.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StockDefinition {
+pub struct StockDefinition<K> {
     /// Stable external identifier.
     pub id: StockId,
     /// Conserved quantity kind stored in the stock.
-    pub kind: KindId,
+    pub kind: K,
 }
 
 /// Immutable metadata for one flow slot in a compiled flow system.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FlowSpec {
+pub struct FlowSpec<K> {
     /// Process responsible for this flow slot.
     pub process: ProcessId,
     /// Conserved quantity kind moved by the flow.
-    pub kind: KindId,
+    pub kind: K,
     /// Source stock, absent for a boundary input.
     pub source: Option<StockId>,
     /// Target stock, absent for a boundary output.
@@ -69,23 +69,23 @@ impl CompiledFlow {
 /// index once. Settlement therefore operates on contiguous amount arrays and
 /// cannot encounter an unknown stock or kind after compilation.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FlowTopology {
+pub struct FlowTopology<K> {
     stocks: Vec<StockId>,
     stock_kinds: Vec<usize>,
     stock_indices: BTreeMap<StockId, usize>,
-    kinds: Vec<KindId>,
-    kind_indices: BTreeMap<KindId, usize>,
+    kinds: Vec<K>,
+    kind_indices: BTreeMap<K, usize>,
     processes: Vec<ProcessId>,
     process_indices: BTreeMap<ProcessId, usize>,
     flows: Vec<CompiledFlow>,
 }
 
-impl FlowTopology {
+impl<K: Kind> FlowTopology<K> {
     /// Compiles stock and flow declarations into a stable index layout.
     pub fn new(
-        stocks: impl IntoIterator<Item = StockDefinition>,
-        flows: impl IntoIterator<Item = FlowSpec>,
-    ) -> Result<Self, StockFlowError> {
+        stocks: impl IntoIterator<Item = StockDefinition<K>>,
+        flows: impl IntoIterator<Item = FlowSpec<K>>,
+    ) -> Result<Self, StockFlowError<K>> {
         let stocks: Vec<_> = stocks.into_iter().collect();
         if stocks.is_empty() {
             return Err(StockFlowError::NoStocks);
@@ -109,7 +109,7 @@ impl FlowTopology {
                 Some(index) => *index,
                 None => {
                     let index = kinds.len();
-                    kind_indices.insert(stock.kind.clone(), index);
+                    kind_indices.insert(stock.kind, index);
                     kinds.push(stock.kind);
                     index
                 }
@@ -127,14 +127,14 @@ impl FlowTopology {
             }
             let source = resolve_stock(
                 flow.source.as_ref(),
-                &flow.kind,
+                flow.kind,
                 &stock_indices,
                 &stock_kinds,
                 &kinds,
             )?;
             let target = resolve_stock(
                 flow.target.as_ref(),
-                &flow.kind,
+                flow.kind,
                 &stock_indices,
                 &stock_kinds,
                 &kinds,
@@ -187,7 +187,7 @@ impl FlowTopology {
     }
 
     /// Conserved kinds in stable first-declaration order.
-    pub fn kinds(&self) -> &[KindId] {
+    pub fn kinds(&self) -> &[K] {
         &self.kinds
     }
 
@@ -207,14 +207,14 @@ impl FlowTopology {
     }
 
     /// Returns the conserved kind stored by a declared stock.
-    pub fn stock_kind_for(&self, stock: &StockId) -> Option<&KindId> {
+    pub fn stock_kind_for(&self, stock: &StockId) -> Option<K> {
         self.stock_index(stock)
-            .map(|index| &self.kinds[self.stock_kinds[index]])
+            .map(|index| self.kinds[self.stock_kinds[index]])
     }
 
     /// Returns the stable index assigned to a conserved kind.
-    pub fn kind_index(&self, kind: &KindId) -> Option<usize> {
-        self.kind_indices.get(kind).copied()
+    pub fn kind_index(&self, kind: K) -> Option<usize> {
+        self.kind_indices.get(&kind).copied()
     }
 
     /// Returns the stable index assigned to a process.
@@ -227,25 +227,25 @@ impl FlowTopology {
     }
 }
 
-fn resolve_stock(
+fn resolve_stock<K: Kind>(
     stock: Option<&StockId>,
-    flow_kind: &KindId,
+    flow_kind: K,
     indices: &BTreeMap<StockId, usize>,
     stock_kinds: &[usize],
-    kinds: &[KindId],
-) -> Result<Option<usize>, StockFlowError> {
+    kinds: &[K],
+) -> Result<Option<usize>, StockFlowError<K>> {
     stock
         .map(|stock| {
             let index = indices
                 .get(stock)
                 .copied()
                 .ok_or_else(|| StockFlowError::UnknownStock(stock.clone()))?;
-            let stock_kind = &kinds[stock_kinds[index]];
+            let stock_kind = kinds[stock_kinds[index]];
             if stock_kind != flow_kind {
                 return Err(StockFlowError::KindMismatch {
                     stock: stock.clone(),
-                    stock_kind: stock_kind.clone(),
-                    flow_kind: flow_kind.clone(),
+                    stock_kind,
+                    flow_kind,
                 });
             }
             Ok(index)

@@ -5,7 +5,12 @@ import pytest
 import conservation_exchange as ce
 
 
-MASS = ce.Dimension("mass")
+REGISTRY = ce.KindRegistry({
+    "mass": ce.KindDeclaration({"mass": 1}, floor="0"),
+    "ratio": ce.KindDeclaration(),
+})
+MASS = REGISTRY.kind("mass")
+RATIO = REGISTRY.kind("ratio")
 
 
 def q(value: int) -> ce.Quantity:
@@ -21,7 +26,7 @@ def request(amount: int = 3, *, maximum: int = 5) -> ce.Exchange:
     return ce.Exchange(
         "create-hold", "new-supply", {"stock": "ore"},
         deltas={"stock": q(amount)}, boundaries={"input": q(amount)},
-        creates=[ce.Stock("ore", "new-owner", MASS, capacities={"hold": ce.Quantity("1")})],
+        creates=[ce.Stock("ore", "new-owner", MASS, capacities={"hold": ce.Quantity("1", RATIO)})],
         declarations=ce.Model({"new-owner"}, [law], {"hold": ce.Capacity(q(maximum))}),
     )
 
@@ -45,7 +50,7 @@ def test_runtime_definitions_publish_with_stock_and_evidence_once() -> None:
     committed = target.snapshot()
     assert target.publish(prepared(target, proposal)) == receipt
     assert target.snapshot() == committed
-    restored = ce.Engine.restore(committed)
+    restored = ce.Engine.restore(committed, REGISTRY)
     assert restored.snapshot() == committed
     assert restored.publish(prepared(restored, proposal)) == receipt
     with pytest.raises(ce.ForeignPreparationError):
@@ -101,7 +106,7 @@ def test_new_law_arity_spends_existing_stock_without_rebuilding_engine() -> None
     assert target.amount("ore") == q(0)
     assert target.amount("ore-a") == q(1)
     assert target.amount("ore-b") == q(2)
-    restored = ce.Engine.restore(target.snapshot())
+    restored = ce.Engine.restore(target.snapshot(), REGISTRY)
     assert restored.snapshot() == target.snapshot()
 
 
@@ -144,7 +149,7 @@ def test_runtime_capacity_change_checks_complete_result() -> None:
     def move(maximum: int) -> ce.Exchange:
         return ce.Exchange(
             "resize", "move", {"stock": "ore"},
-            moves={"ore": ce.Placement("new-owner", {"replacement": ce.Quantity("1")})},
+            moves={"ore": ce.Placement("new-owner", {"replacement": ce.Quantity("1", RATIO)})},
             declarations=ce.Model(set(), [law], {"replacement": ce.Capacity(q(maximum))}),
         )
 
@@ -154,7 +159,7 @@ def test_runtime_capacity_change_checks_complete_result() -> None:
     assert target.snapshot() == before
     target.publish(target.prepare(move(3)))
     assert target.amount("ore") == q(3)
-    assert ce.Engine.restore(target.snapshot()).snapshot() == target.snapshot()
+    assert ce.Engine.restore(target.snapshot(), REGISTRY).snapshot() == target.snapshot()
 
 
 def test_runtime_law_order_is_canonical_and_conflicts_fail() -> None:

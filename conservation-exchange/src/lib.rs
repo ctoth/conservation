@@ -8,6 +8,6 @@ mod model;
 pub use engine::{Engine, Participation, Prepared, Receipt};
 pub use expression::{Constraint, Expr, Relation};
 pub use model::{
-    Capacity, Dimension, Domain, Error, Exchange, Fact, Law, Model, Placement, Quantity,
-    RecordWrite, Stock,
+    Capacity, DimensionContext, Error, Exchange, Fact, KindContext, Law, Model, Placement,
+    Quantity, RecordWrite, Stock,
 };

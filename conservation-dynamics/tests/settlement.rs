@@ -1,7 +1,7 @@
-use conservation_core::KindId;
 use conservation_dynamics::{
     ProcessId, ProposedFlow, StockFlowError, StockFlowSystem, StockId, StockSpec,
 };
+use conservation_test_kinds::TestKind;
 use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::{Signed, Zero};
@@ -19,30 +19,26 @@ fn process(value: &str) -> ProcessId {
     ProcessId::new(value).unwrap()
 }
 
-fn material() -> KindId {
-    KindId::new("material").unwrap()
-}
-
-fn system(a: i64, b: i64) -> StockFlowSystem {
+fn system(a: i64, b: i64) -> StockFlowSystem<TestKind> {
     StockFlowSystem::new([
         StockSpec {
             id: id("a"),
-            kind: material(),
+            kind: TestKind::Material,
             initial: integer(a),
         },
         StockSpec {
             id: id("b"),
-            kind: material(),
+            kind: TestKind::Material,
             initial: integer(b),
         },
     ])
     .unwrap()
 }
 
-fn transfer(name: &str, source: &str, target: &str, amount: i64) -> ProposedFlow {
+fn transfer(name: &str, source: &str, target: &str, amount: i64) -> ProposedFlow<TestKind> {
     ProposedFlow {
         process: process(name),
-        kind: material(),
+        kind: TestKind::Material,
         source: Some(id(source)),
         target: Some(id(target)),
         amount: integer(amount),
@@ -57,7 +53,7 @@ fn competing_withdrawals_are_limited_proportionally() {
             transfer("first", "a", "b", 8),
             ProposedFlow {
                 process: process("export"),
-                kind: material(),
+                kind: TestKind::Material,
                 source: Some(id("a")),
                 target: None,
                 amount: integer(12),
@@ -69,7 +65,7 @@ fn competing_withdrawals_are_limited_proportionally() {
     assert_eq!(report.flows()[1].applied, integer(6));
     assert_eq!(state.amount(&id("a")), Some(&integer(0)));
     assert_eq!(state.amount(&id("b")), Some(&integer(4)));
-    assert!(state.balance_residual(&material()).is_zero());
+    assert!(state.balance_residual(TestKind::Material).is_zero());
 }
 
 #[test]
@@ -100,13 +96,13 @@ proptest! {
         state.settle(&[
             transfer("ab", "a", "b", ab),
             transfer("ba", "b", "a", ba),
-            ProposedFlow { process: process("output"), kind: material(), source: Some(id("a")), target: None, amount: integer(output_a) },
-            ProposedFlow { process: process("input"), kind: material(), source: None, target: Some(id("b")), amount: integer(input_b) },
+            ProposedFlow { process: process("output"), kind: TestKind::Material, source: Some(id("a")), target: None, amount: integer(output_a) },
+            ProposedFlow { process: process("input"), kind: TestKind::Material, source: None, target: Some(id("b")), amount: integer(input_b) },
         ]).unwrap();
 
         prop_assert!(!state.amount(&id("a")).unwrap().is_negative());
         prop_assert!(!state.amount(&id("b")).unwrap().is_negative());
-        prop_assert!(state.balance_residual(&material()).is_zero());
+        prop_assert!(state.balance_residual(TestKind::Material).is_zero());
     }
 
     #[test]
@@ -119,7 +115,7 @@ proptest! {
         let proposals = [
             transfer("first", "a", "b", first),
             transfer("second", "a", "b", second),
-            ProposedFlow { process: process("output"), kind: material(), source: Some(id("a")), target: None, amount: integer(output) },
+            ProposedFlow { process: process("output"), kind: TestKind::Material, source: Some(id("a")), target: None, amount: integer(output) },
         ];
         let mut forward = system(initial, 0);
         forward.settle(&proposals).unwrap();
@@ -128,8 +124,8 @@ proptest! {
 
         prop_assert_eq!(forward.amount(&id("a")), reverse.amount(&id("a")));
         prop_assert_eq!(forward.amount(&id("b")), reverse.amount(&id("b")));
-        prop_assert_eq!(forward.inputs(&material()), reverse.inputs(&material()));
-        prop_assert_eq!(forward.outputs(&material()), reverse.outputs(&material()));
+        prop_assert_eq!(forward.inputs(TestKind::Material), reverse.inputs(TestKind::Material));
+        prop_assert_eq!(forward.outputs(TestKind::Material), reverse.outputs(TestKind::Material));
     }
 
     #[test]
@@ -148,6 +144,6 @@ proptest! {
 
         prop_assert_eq!(merged.amount(&id("a")), split.amount(&id("a")));
         prop_assert_eq!(merged.amount(&id("b")), split.amount(&id("b")));
-        prop_assert_eq!(merged.balance_residual(&material()), split.balance_residual(&material()));
+        prop_assert_eq!(merged.balance_residual(TestKind::Material), split.balance_residual(TestKind::Material));
     }
 }

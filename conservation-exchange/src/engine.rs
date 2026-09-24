@@ -1,77 +1,98 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::convert::Infallible;
 use std::sync::Arc;
 
+use conservation_core::{DimensionAlgebra, KindRegistry};
 use num_rational::BigRational;
 use num_traits::{Signed, Zero};
 use serde::{Deserialize, Serialize};
 
 use crate::expression::Evaluation;
-use crate::model::{ValidatedModel, identifier, invalid, zero};
-use crate::{Domain, Error, Exchange, Law, Model, Quantity, RecordWrite, Stock};
+use crate::model::{KindContext, ValidatedModel, identifier, invalid, zero};
+use crate::{
+    Capacity, Constraint, Error, Exchange, Expr, Fact, Law, Model, Placement, Quantity,
+    RecordWrite, Stock,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Contribution {
+struct Contribution<K> {
     owner: String,
     writes: Vec<RecordWrite>,
-    facts: BTreeMap<String, Quantity>,
+    facts: BTreeMap<String, Quantity<K>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Request {
-    exchange: Exchange,
-    contributions: Vec<Contribution>,
+struct Request<K> {
+    exchange: Exchange<K>,
+    contributions: Vec<Contribution<K>>,
 }
 
 /// Evidence of the committed transition. Boundary amounts are signed net inputs.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Receipt {
+pub struct Receipt<K> {
     pub id: String,
     pub revision: u64,
     pub law: String,
-    pub boundaries: BTreeMap<String, Quantity>,
-    pub changes: BTreeMap<String, (Quantity, Quantity)>,
+    pub boundaries: BTreeMap<String, Quantity<K>>,
+    pub changes: BTreeMap<String, (Quantity<K>, Quantity<K>)>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct StockState {
-    definition: Arc<Stock>,
+struct StockState<K> {
+    definition: Arc<Stock<K>>,
     amount: BigRational,
 }
 
 type OwnerRecords = BTreeMap<String, Arc<Vec<u8>>>;
+/// One committed request and the receipt it produced.
+type Commit<K> = (Arc<Request<K>>, Arc<Receipt<K>>);
 
-#[derive(Clone, Debug, Default)]
-struct State {
-    model: Arc<ValidatedModel>,
+#[derive(Clone, Debug)]
+struct State<K> {
+    model: Arc<ValidatedModel<K>>,
     revision: u64,
-    stocks: BTreeMap<String, Arc<StockState>>,
+    stocks: BTreeMap<String, Arc<StockState<K>>>,
     retired: BTreeSet<String>,
     records: BTreeMap<String, Arc<OwnerRecords>>,
-    commits: Vec<(Arc<Request>, Arc<Receipt>)>,
+    commits: Vec<Commit<K>>,
     committed: BTreeMap<String, usize>,
+}
+
+impl<K> Default for State<K> {
+    fn default() -> Self {
+        Self {
+            model: Arc::default(),
+            revision: 0,
+            stocks: BTreeMap::new(),
+            retired: BTreeSet::new(),
+            records: BTreeMap::new(),
+            commits: Vec::new(),
+            committed: BTreeMap::new(),
+        }
+    }
 }
 
 /// An owner-authored contribution tied to one exact proposal and observed root.
 /// It contains no callbacks and cannot mutate either the engine or external state.
 #[derive(Clone, Debug)]
-pub struct Participation {
+pub struct Participation<K> {
     lineage: Arc<()>,
-    base: Arc<State>,
-    exchange: Exchange,
-    contribution: Contribution,
+    base: Arc<State<K>>,
+    exchange: Exchange<K>,
+    contribution: Contribution<K>,
 }
 
 /// Opaque, process-local preparation. Restore deliberately invalidates all handles.
 #[derive(Clone, Debug)]
-pub struct Prepared {
+pub struct Prepared<K> {
     lineage: Arc<()>,
-    base: Arc<State>,
-    request: Arc<Request>,
-    next: Option<Arc<State>>,
-    receipt: Receipt,
+    base: Arc<State<K>>,
+    request: Arc<Request<K>>,
+    next: Option<Arc<State<K>>>,
+    receipt: Receipt<K>,
 }
 
 /// One quantity/participant authority. Publication replaces one immutable root.
@@ -79,14 +100,14 @@ pub struct Prepared {
 /// Domain participants store their canonical immutable records here. Mutating a
 /// foreign database/object is not participation and is not made atomic by this API.
 #[derive(Debug)]
-pub struct Engine {
+pub struct Engine<K> {
     lineage: Arc<()>,
-    initial_model: Model,
-    state: Arc<State>,
+    initial_model: Model<K>,
+    state: Arc<State<K>>,
 }
 
-impl Engine {
-    pub fn new(mut model: Model) -> Result<Self, Error> {
+impl<K: DimensionAlgebra> Engine<K> {
+    pub fn new(mut model: Model<K>) -> Result<Self, Error<K>> {
         let validated = Arc::new(ValidatedModel::new(&model)?);
         model.laws.sort_by(|a, b| a.id.cmp(&b.id));
         let state = State {
@@ -103,14 +124,14 @@ impl Engine {
     pub fn revision(&self) -> u64 {
         self.state.revision
     }
-    pub fn amount(&self, stock: &str) -> Result<&BigRational, Error> {
+    pub fn amount(&self, stock: &str) -> Result<&BigRational, Error<K>> {
         self.state
             .stocks
             .get(stock)
             .map(|state| &state.amount)
             .ok_or_else(|| invalid(format!("unknown stock {stock}")))
     }
-    pub fn stock(&self, stock: &str) -> Result<&Stock, Error> {
+    pub fn stock(&self, stock: &str) -> Result<&Stock<K>, Error<K>> {
         self.state
             .stocks
             .get(stock)
@@ -124,7 +145,7 @@ impl Engine {
             .get(key)
             .map(|value| value.as_slice())
     }
-    pub fn receipt(&self, id: &str) -> Option<&Receipt> {
+    pub fn receipt(&self, id: &str) -> Option<&Receipt<K>> {
         self.state
             .committed
             .get(id)
@@ -137,10 +158,10 @@ impl Engine {
     pub fn participate(
         &self,
         owner: &str,
-        exchange: &Exchange,
+        exchange: &Exchange<K>,
         mut writes: Vec<RecordWrite>,
-        facts: BTreeMap<String, Quantity>,
-    ) -> Result<Participation, Error> {
+        facts: BTreeMap<String, Quantity<K>>,
+    ) -> Result<Participation<K>, Error<K>> {
         let model = self.model_for(exchange)?;
         model.owner(owner)?;
         let exchange = Self::canonical(exchange.clone(), &model)?;
@@ -173,9 +194,9 @@ impl Engine {
     /// Validate without publishing. Preparing never reserves resources or emits evidence.
     pub fn prepare(
         &self,
-        exchange: Exchange,
-        participation: Vec<Participation>,
-    ) -> Result<Prepared, Error> {
+        exchange: Exchange<K>,
+        participation: Vec<Participation<K>>,
+    ) -> Result<Prepared<K>, Error<K>> {
         let model = self.model_for(&exchange)?;
         let exchange = Self::canonical(exchange, &model)?;
         for part in &participation {
@@ -231,7 +252,7 @@ impl Engine {
 
     /// The only mutation boundary. All allocation/validation precedes the root swap.
     /// No user code, IO, or observer runs while publishing.
-    pub fn publish(&mut self, prepared: Prepared) -> Result<Receipt, Error> {
+    pub fn publish(&mut self, prepared: Prepared<K>) -> Result<Receipt<K>, Error<K>> {
         if !Arc::ptr_eq(&prepared.lineage, &self.lineage) {
             return Err(Error::ForeignPreparation);
         }
@@ -249,10 +270,11 @@ impl Engine {
     }
 
     /// Versioned replay snapshot of the authoritative model and committed cut.
-    /// Preparations are intentionally absent; restoring creates a new handle lineage.
-    pub fn snapshot(&self) -> Result<Vec<u8>, Error> {
+    /// Each kind is written as its registry name. Preparations are intentionally
+    /// absent; restoring creates a new handle lineage.
+    pub fn snapshot(&self) -> Result<Vec<u8>, Error<K>> {
         let snapshot = Snapshot {
-            version: 2,
+            version: SNAPSHOT_VERSION,
             model: self.initial_model.clone(),
             requests: self
                 .state
@@ -260,20 +282,28 @@ impl Engine {
                 .iter()
                 .map(|(request, _)| request.clone())
                 .collect(),
-        };
+        }
+        .map_kinds(&mut |kind: K| Ok::<_, Infallible>(kind.to_string()))
+        .unwrap_or_else(|never| match never {});
         serde_json::to_vec(&snapshot).map_err(|error| Error::Snapshot(error.to_string()))
     }
 
-    /// Revalidate every recorded transition; never trust separately serialized balances.
-    pub fn restore(bytes: &[u8]) -> Result<Self, Error> {
-        let snapshot: Snapshot =
+    /// Resolve every kind name once through `registry`, then revalidate every
+    /// recorded transition; never trust separately serialized balances.
+    pub fn restore<R: KindRegistry<Kind = K>>(
+        bytes: &[u8],
+        registry: &R,
+    ) -> Result<Self, Error<K>> {
+        let SnapshotVersion { version } =
             serde_json::from_slice(bytes).map_err(|error| Error::Snapshot(error.to_string()))?;
-        if snapshot.version != 2 {
-            return Err(Error::Snapshot(format!(
-                "unsupported version {}",
-                snapshot.version
-            )));
+        if version != SNAPSHOT_VERSION {
+            return Err(Error::UnsupportedSnapshot { version });
         }
+        let snapshot: Snapshot<String> =
+            serde_json::from_slice(bytes).map_err(|error| Error::Snapshot(error.to_string()))?;
+        let snapshot = snapshot.map_kinds(&mut |name: String| {
+            registry.resolve(&name).ok_or(Error::UnknownKind { name })
+        })?;
         let mut engine = Self::new(snapshot.model)?;
         for request in snapshot.requests {
             let request = Arc::unwrap_or_clone(request);
@@ -293,14 +323,14 @@ impl Engine {
         Ok(engine)
     }
 
-    fn model_for(&self, exchange: &Exchange) -> Result<Arc<ValidatedModel>, Error> {
+    fn model_for(&self, exchange: &Exchange<K>) -> Result<Arc<ValidatedModel<K>>, Error<K>> {
         match &exchange.declarations {
             Some(declarations) => self.state.model.extended(declarations).map(Arc::new),
             None => Ok(self.state.model.clone()),
         }
     }
 
-    fn law<'a>(model: &'a ValidatedModel, id: &str) -> Result<&'a Law, Error> {
+    fn law<'a>(model: &'a ValidatedModel<K>, id: &str) -> Result<&'a Law<K>, Error<K>> {
         model
             .laws
             .get(id)
@@ -308,7 +338,10 @@ impl Engine {
             .ok_or_else(|| invalid(format!("unknown law {id}")))
     }
 
-    fn canonical(mut exchange: Exchange, model: &ValidatedModel) -> Result<Exchange, Error> {
+    fn canonical(
+        mut exchange: Exchange<K>,
+        model: &ValidatedModel<K>,
+    ) -> Result<Exchange<K>, Error<K>> {
         identifier(&exchange.id)?;
         if let Some(declarations) = &mut exchange.declarations {
             declarations.laws.sort_by(|a, b| a.id.cmp(&b.id));
@@ -325,32 +358,30 @@ impl Engine {
             }
         }
         for (id, value) in &exchange.deltas {
-            value.same_dimension(
-                law.slots
-                    .get(id)
-                    .ok_or_else(|| invalid(format!("undeclared delta slot {id}")))?,
-                id,
-            )?;
+            let slot = law
+                .slots
+                .get(id)
+                .ok_or_else(|| invalid(format!("undeclared delta slot {id}")))?;
+            value.same_kind(slot.difference(), KindContext::Delta { slot: id.clone() })?;
         }
         for (id, value) in &exchange.boundaries {
-            value.same_dimension(
-                law.boundaries
-                    .get(id)
-                    .ok_or_else(|| invalid(format!("undeclared boundary {id}")))?,
-                id,
-            )?;
+            let port = law
+                .boundaries
+                .get(id)
+                .ok_or_else(|| invalid(format!("undeclared boundary {id}")))?;
+            value.same_kind(*port, KindContext::Boundary { port: id.clone() })?;
         }
-        for (id, dimension) in &law.slots {
+        for (id, kind) in &law.slots {
             exchange
                 .deltas
                 .entry(id.clone())
-                .or_insert_with(|| zero(dimension));
+                .or_insert_with(|| zero(kind.difference()));
         }
-        for (id, dimension) in &law.boundaries {
+        for (id, kind) in &law.boundaries {
             exchange
                 .boundaries
                 .entry(id.clone())
-                .or_insert_with(|| zero(dimension));
+                .or_insert_with(|| zero(*kind));
         }
         exchange.creates.sort_by(|a, b| a.id.cmp(&b.id));
         if exchange
@@ -379,7 +410,7 @@ impl Engine {
         Ok(exchange)
     }
 
-    fn duplicate(&self, request: &Request) -> Result<Option<&Receipt>, Error> {
+    fn duplicate(&self, request: &Request<K>) -> Result<Option<&Receipt<K>>, Error<K>> {
         if let Some(index) = self.state.committed.get(&request.exchange.id) {
             let (original, receipt) = &self.state.commits[*index];
             if original.as_ref() != request {
@@ -394,9 +425,9 @@ impl Engine {
 
     fn transition(
         &self,
-        request: &Arc<Request>,
-        model: Arc<ValidatedModel>,
-    ) -> Result<(State, Receipt), Error> {
+        request: &Arc<Request<K>>,
+        model: Arc<ValidatedModel<K>>,
+    ) -> Result<(State<K>, Receipt<K>), Error<K>> {
         let exchange = &request.exchange;
         let law = Self::law(&model, &exchange.law)?;
         let present: BTreeSet<_> = request
@@ -420,7 +451,7 @@ impl Engine {
                         format!("wrong owner for fact {id}"),
                     ));
                 }
-                value.same_dimension(&declaration.dimension, id)?;
+                value.same_kind(declaration.kind, KindContext::Fact { fact: id.clone() })?;
                 if facts.insert(id.clone(), value.clone()).is_some() {
                     return Err(participant(&part.owner, "duplicate fact"));
                 }
@@ -451,21 +482,29 @@ impl Engine {
                     .get_mut(id)
                     .ok_or_else(|| invalid(format!("unknown stock {id}")))?,
             );
-            let dimension = &law.slots[slot];
-            if &stock.definition.dimension != dimension {
-                return Err(Error::Dimension {
-                    context: format!("slot {slot}, stock {id}"),
+            let kind = law.slots[slot];
+            if stock.definition.kind != kind {
+                return Err(Error::Kinds {
+                    context: KindContext::Slot {
+                        slot: slot.clone(),
+                        stock: id.clone(),
+                    },
+                    expected: kind,
+                    found: stock.definition.kind,
                 });
             }
-            let prior = Quantity::new(stock.amount.clone(), dimension.clone());
+            let prior = Quantity::new(stock.amount.clone(), kind);
             stock.amount += &exchange.deltas[slot].amount;
-            if stock.definition.domain == Domain::Nonnegative && stock.amount.is_negative() {
-                return Err(Error::Domain {
-                    stock: id.clone(),
-                    amount: stock.amount.clone(),
-                });
+            if let Some(floor) = kind.floor() {
+                if stock.amount < floor {
+                    return Err(Error::BelowFloor {
+                        stock: id.clone(),
+                        kind,
+                        amount: stock.amount.clone(),
+                    });
+                }
             }
-            let following = Quantity::new(stock.amount.clone(), dimension.clone());
+            let following = Quantity::new(stock.amount.clone(), kind);
             before.insert(slot.clone(), prior.clone());
             after.insert(slot.clone(), following.clone());
             changes.insert(id.clone(), (prior, following));
@@ -550,39 +589,249 @@ impl Engine {
     }
 }
 
-fn participant(owner: &str, reason: impl Into<String>) -> Error {
+fn participant<K: DimensionAlgebra>(owner: &str, reason: impl Into<String>) -> Error<K> {
     Error::Participant {
         owner: owner.into(),
         reason: reason.into(),
     }
 }
 
+const SNAPSHOT_VERSION: u32 = 3;
+
+/// Read first, so an unsupported version is reported before its fields are parsed.
+#[derive(Deserialize)]
+struct SnapshotVersion {
+    version: u32,
+}
+
+/// The wire form is `Snapshot<String>`: every kind is its registry name.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Snapshot {
+struct Snapshot<K> {
     version: u32,
-    model: Model,
-    requests: Vec<Arc<Request>>,
+    model: Model<K>,
+    requests: Vec<Arc<Request<K>>>,
+}
+
+/// Replaces every kind in a document, one at a time. The only way kinds cross
+/// the snapshot byte boundary.
+pub(crate) trait MapKinds<K>: Sized {
+    type Mapped<L>;
+    fn map_kinds<L, E>(self, f: &mut impl FnMut(K) -> Result<L, E>) -> Result<Self::Mapped<L>, E>;
+}
+
+fn map_named<T: MapKinds<K>, K, L, E>(
+    values: BTreeMap<String, T>,
+    f: &mut impl FnMut(K) -> Result<L, E>,
+) -> Result<BTreeMap<String, T::Mapped<L>>, E> {
+    values
+        .into_iter()
+        .map(|(id, value)| Ok((id, value.map_kinds(f)?)))
+        .collect()
+}
+
+fn map_named_kinds<K, L, E>(
+    values: BTreeMap<String, K>,
+    f: &mut impl FnMut(K) -> Result<L, E>,
+) -> Result<BTreeMap<String, L>, E> {
+    values
+        .into_iter()
+        .map(|(id, kind)| Ok((id, f(kind)?)))
+        .collect()
+}
+
+fn map_each<T: MapKinds<K>, K, L, E>(
+    values: Vec<T>,
+    f: &mut impl FnMut(K) -> Result<L, E>,
+) -> Result<Vec<T::Mapped<L>>, E> {
+    values.into_iter().map(|value| value.map_kinds(f)).collect()
+}
+
+impl<K> MapKinds<K> for Quantity<K> {
+    type Mapped<L> = Quantity<L>;
+    fn map_kinds<L, E>(self, f: &mut impl FnMut(K) -> Result<L, E>) -> Result<Quantity<L>, E> {
+        Ok(Quantity {
+            amount: self.amount,
+            kind: f(self.kind)?,
+        })
+    }
+}
+
+impl<K> MapKinds<K> for Stock<K> {
+    type Mapped<L> = Stock<L>;
+    fn map_kinds<L, E>(self, f: &mut impl FnMut(K) -> Result<L, E>) -> Result<Stock<L>, E> {
+        Ok(Stock {
+            id: self.id,
+            owner: self.owner,
+            kind: f(self.kind)?,
+            capacities: map_named(self.capacities, f)?,
+        })
+    }
+}
+
+impl<K> MapKinds<K> for Placement<K> {
+    type Mapped<L> = Placement<L>;
+    fn map_kinds<L, E>(self, f: &mut impl FnMut(K) -> Result<L, E>) -> Result<Placement<L>, E> {
+        Ok(Placement {
+            owner: self.owner,
+            capacities: map_named(self.capacities, f)?,
+        })
+    }
+}
+
+impl<K> MapKinds<K> for Capacity<K> {
+    type Mapped<L> = Capacity<L>;
+    fn map_kinds<L, E>(self, f: &mut impl FnMut(K) -> Result<L, E>) -> Result<Capacity<L>, E> {
+        Ok(Capacity {
+            maximum: self.maximum.map_kinds(f)?,
+        })
+    }
+}
+
+impl<K> MapKinds<K> for Fact<K> {
+    type Mapped<L> = Fact<L>;
+    fn map_kinds<L, E>(self, f: &mut impl FnMut(K) -> Result<L, E>) -> Result<Fact<L>, E> {
+        Ok(Fact {
+            owner: self.owner,
+            kind: f(self.kind)?,
+        })
+    }
+}
+
+impl<K> MapKinds<K> for Expr<K> {
+    type Mapped<L> = Expr<L>;
+    fn map_kinds<L, E>(self, f: &mut impl FnMut(K) -> Result<L, E>) -> Result<Expr<L>, E> {
+        Ok(match self {
+            Self::Constant(value) => Expr::Constant(value.map_kinds(f)?),
+            Self::Before(id) => Expr::Before(id),
+            Self::After(id) => Expr::After(id),
+            Self::Delta(id) => Expr::Delta(id),
+            Self::Boundary(id) => Expr::Boundary(id),
+            Self::Fact(id) => Expr::Fact(id),
+            Self::Sum(terms) => Expr::Sum(map_each(terms, f)?),
+            Self::Product(a, b) => {
+                Expr::Product(Box::new(a.map_kinds(f)?), Box::new(b.map_kinds(f)?))
+            }
+            Self::Quotient(a, b) => {
+                Expr::Quotient(Box::new(a.map_kinds(f)?), Box::new(b.map_kinds(f)?))
+            }
+        })
+    }
+}
+
+impl<K> MapKinds<K> for Constraint<K> {
+    type Mapped<L> = Constraint<L>;
+    fn map_kinds<L, E>(self, f: &mut impl FnMut(K) -> Result<L, E>) -> Result<Constraint<L>, E> {
+        Ok(Constraint {
+            id: self.id,
+            left: self.left.map_kinds(f)?,
+            right: self.right.map_kinds(f)?,
+            relation: self.relation,
+            absolute: self.absolute,
+            relative: self.relative,
+        })
+    }
+}
+
+impl<K> MapKinds<K> for Law<K> {
+    type Mapped<L> = Law<L>;
+    fn map_kinds<L, E>(self, f: &mut impl FnMut(K) -> Result<L, E>) -> Result<Law<L>, E> {
+        Ok(Law {
+            id: self.id,
+            slots: map_named_kinds(self.slots, f)?,
+            boundaries: map_named_kinds(self.boundaries, f)?,
+            facts: map_named(self.facts, f)?,
+            participants: self.participants,
+            constraints: map_each(self.constraints, f)?,
+        })
+    }
+}
+
+impl<K> MapKinds<K> for Model<K> {
+    type Mapped<L> = Model<L>;
+    fn map_kinds<L, E>(self, f: &mut impl FnMut(K) -> Result<L, E>) -> Result<Model<L>, E> {
+        Ok(Model {
+            owners: self.owners,
+            capacities: map_named(self.capacities, f)?,
+            laws: map_each(self.laws, f)?,
+        })
+    }
+}
+
+impl<K> MapKinds<K> for Exchange<K> {
+    type Mapped<L> = Exchange<L>;
+    fn map_kinds<L, E>(self, f: &mut impl FnMut(K) -> Result<L, E>) -> Result<Exchange<L>, E> {
+        Ok(Exchange {
+            id: self.id,
+            law: self.law,
+            bindings: self.bindings,
+            deltas: map_named(self.deltas, f)?,
+            boundaries: map_named(self.boundaries, f)?,
+            creates: map_each(self.creates, f)?,
+            removes: self.removes,
+            moves: map_named(self.moves, f)?,
+            declarations: self
+                .declarations
+                .map(|model| model.map_kinds(f))
+                .transpose()?,
+        })
+    }
+}
+
+impl<K> MapKinds<K> for Contribution<K> {
+    type Mapped<L> = Contribution<L>;
+    fn map_kinds<L, E>(self, f: &mut impl FnMut(K) -> Result<L, E>) -> Result<Contribution<L>, E> {
+        Ok(Contribution {
+            owner: self.owner,
+            writes: self.writes,
+            facts: map_named(self.facts, f)?,
+        })
+    }
+}
+
+impl<K> MapKinds<K> for Request<K> {
+    type Mapped<L> = Request<L>;
+    fn map_kinds<L, E>(self, f: &mut impl FnMut(K) -> Result<L, E>) -> Result<Request<L>, E> {
+        Ok(Request {
+            exchange: self.exchange.map_kinds(f)?,
+            contributions: map_each(self.contributions, f)?,
+        })
+    }
+}
+
+impl<K: Clone> MapKinds<K> for Snapshot<K> {
+    type Mapped<L> = Snapshot<L>;
+    fn map_kinds<L, E>(self, f: &mut impl FnMut(K) -> Result<L, E>) -> Result<Snapshot<L>, E> {
+        Ok(Snapshot {
+            version: self.version,
+            model: self.model.map_kinds(f)?,
+            requests: self
+                .requests
+                .into_iter()
+                .map(|request| Ok(Arc::new(Arc::unwrap_or_clone(request).map_kinds(f)?)))
+                .collect::<Result<_, E>>()?,
+        })
+    }
 }
 
 #[cfg(test)]
 mod sharing_tests {
     use super::*;
-    use crate::{Constraint, Dimension, Expr};
+    use conservation_test_kinds::{TestKind, TestKinds};
 
     #[test]
     fn unchanged_payloads_are_shared_across_prepared_roots() {
-        let dimension = Dimension::base("mass").unwrap();
+        let kind = TestKind::Material;
         let law = Law {
             id: "hold".into(),
-            slots: BTreeMap::from([("stock".into(), dimension.clone())]),
+            slots: BTreeMap::from([("stock".into(), kind)]),
             boundaries: BTreeMap::new(),
             facts: BTreeMap::new(),
             participants: BTreeSet::from(["owner".into()]),
             constraints: vec![Constraint::equal(
                 "zero",
                 Expr::delta("stock"),
-                Expr::constant(zero(&dimension)),
+                Expr::constant(zero(kind)),
             )],
         };
         let mut engine = Engine::new(Model {
@@ -596,8 +845,7 @@ mod sharing_tests {
         first.creates.push(Stock {
             id: "item".into(),
             owner: "owner".into(),
-            dimension,
-            domain: Domain::Nonnegative,
+            kind,
             capacities: BTreeMap::new(),
         });
         let part = engine
@@ -653,8 +901,8 @@ mod sharing_tests {
             ),
             "historical receipt was deep-copied"
         );
-        let old_request: &Request = &old.state.commits[0].0;
-        let new_request: &Request = &engine.state.commits[0].0;
+        let old_request: &Request<TestKind> = &old.state.commits[0].0;
+        let new_request: &Request<TestKind> = &engine.state.commits[0].0;
         assert!(
             std::ptr::eq(old_request, new_request),
             "historical request was deep-copied"
@@ -668,7 +916,10 @@ mod sharing_tests {
         );
         let snapshot = engine.snapshot().unwrap();
         assert_eq!(
-            Engine::restore(&snapshot).unwrap().snapshot().unwrap(),
+            Engine::restore(&snapshot, &TestKinds)
+                .unwrap()
+                .snapshot()
+                .unwrap(),
             snapshot
         );
     }

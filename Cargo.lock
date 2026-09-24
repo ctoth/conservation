@@ -132,8 +132,9 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "conservation-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
+ "conservation-test-kinds",
  "num-bigint",
  "num-rational",
  "num-traits",
@@ -141,9 +142,10 @@ dependencies = [
 
 [[package]]
 name = "conservation-dynamics"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "conservation-core",
+ "conservation-test-kinds",
  "criterion",
  "num-bigint",
  "num-rational",
@@ -153,9 +155,10 @@ dependencies = [
 
 [[package]]
 name = "conservation-exchange"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "conservation-core",
+ "conservation-test-kinds",
  "num-bigint",
  "num-rational",
  "num-traits",
@@ -166,9 +169,10 @@ dependencies = [
 
 [[package]]
 name = "conservation-linear"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "conservation-core",
+ "conservation-test-kinds",
  "num-bigint",
  "num-integer",
  "num-rational",
@@ -178,8 +182,9 @@ dependencies = [
 
 [[package]]
 name = "conservation-python"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
+ "conservation-core",
  "conservation-exchange",
  "num-rational",
  "num-traits",
@@ -188,11 +193,12 @@ dependencies = [
 
 [[package]]
 name = "conservation-stock-flow"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "conservation-core",
  "conservation-dynamics",
  "conservation-linear",
+ "conservation-test-kinds",
  "conservation-trace",
  "num-bigint",
  "num-rational",
@@ -201,10 +207,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "conservation-trace"
-version = "0.1.0"
+name = "conservation-test-kinds"
+version = "0.2.0"
 dependencies = [
  "conservation-core",
+ "num-bigint",
+ "num-rational",
+ "num-traits",
+]
+
+[[package]]
+name = "conservation-trace"
+version = "0.2.0"
+dependencies = [
+ "conservation-core",
+ "conservation-test-kinds",
  "num-bigint",
  "num-rational",
  "num-traits",

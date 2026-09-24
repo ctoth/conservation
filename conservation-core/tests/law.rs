@@ -1,15 +1,12 @@
 use conservation_core::{
-    AxisId, BalanceLaw, BalanceLawError, Grade, GradedLaw, IdentifierError, KindId, Provenance,
+    AxisId, BalanceLaw, BalanceLawError, Grade, GradedLaw, IdentifierError, Provenance, nonblank,
 };
+use conservation_test_kinds::TestKind;
 use num_bigint::BigInt;
 use num_rational::BigRational;
 
 fn axis(value: &str) -> AxisId {
     AxisId::new(value).unwrap()
-}
-
-fn kind(value: &str) -> KindId {
-    KindId::new(value).unwrap()
 }
 
 fn q(value: i64) -> BigRational {
@@ -20,25 +17,26 @@ fn q(value: i64) -> BigRational {
 fn identifiers_reject_empty_and_whitespace_only_text() {
     assert_eq!(AxisId::new(""), Err(IdentifierError::Blank));
     assert_eq!(AxisId::new(" \t\n"), Err(IdentifierError::Blank));
-    assert_eq!(KindId::new(""), Err(IdentifierError::Blank));
-    assert_eq!(KindId::new("  "), Err(IdentifierError::Blank));
+    assert_eq!(nonblank(""), Err(IdentifierError::Blank));
+    assert_eq!(nonblank("  "), Err(IdentifierError::Blank));
+    assert_eq!(nonblank("amount"), Ok(()));
 }
 
 #[test]
 fn balance_law_keeps_exact_coefficients_and_origin_metadata() {
-    let amount = kind("amount");
+    let amount = TestKind::Amount;
     let source = axis("source");
     let sink = axis("sink");
     let half = BigRational::new(BigInt::from(1), BigInt::from(2));
 
     let law = BalanceLaw::new(
-        amount.clone(),
+        amount,
         [(source.clone(), half.clone()), (sink.clone(), half.clone())],
         Provenance::Declared,
     )
     .unwrap();
 
-    assert_eq!(law.kind(), &amount);
+    assert_eq!(law.kind(), amount);
     assert_eq!(law.coefficient(&source), &half);
     assert_eq!(law.coefficient(&sink), &half);
     assert_eq!(law.provenance(), &Provenance::Declared);
@@ -47,18 +45,18 @@ fn balance_law_keeps_exact_coefficients_and_origin_metadata() {
 #[test]
 fn balance_law_rejects_empty_and_fully_cancelled_coefficients() {
     assert_eq!(
-        BalanceLaw::new(kind("amount"), [], Provenance::Declared),
+        BalanceLaw::new(TestKind::Amount, [], Provenance::Declared),
         Err(BalanceLawError::Empty)
     );
 
     let x = axis("x");
     assert_eq!(
-        BalanceLaw::new(kind("amount"), [(x.clone(), q(0))], Provenance::Declared,),
+        BalanceLaw::new(TestKind::Amount, [(x.clone(), q(0))], Provenance::Declared,),
         Err(BalanceLawError::Empty)
     );
     assert_eq!(
         BalanceLaw::new(
-            kind("amount"),
+            TestKind::Amount,
             [(x.clone(), q(7)), (x, q(-7))],
             Provenance::Declared,
         ),
@@ -69,7 +67,7 @@ fn balance_law_rejects_empty_and_fully_cancelled_coefficients() {
 #[test]
 fn graded_law_keeps_its_form_and_grade() {
     let form = BalanceLaw::new(
-        kind("energy"),
+        TestKind::Energy,
         [(axis("reservoir"), q(1)), (axis("dissipated"), q(1))],
         Provenance::Declared,
     )

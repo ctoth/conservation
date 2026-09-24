@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
-use conservation_core::{IdentifierError, KindId};
+use conservation_core::{IdentifierError, Kind, nonblank};
 use num_rational::BigRational;
 use num_traits::{One, Signed, Zero};
 
@@ -33,9 +33,7 @@ impl StockId {
     /// Creates a nonblank stock identifier.
     pub fn new(value: impl Into<String>) -> Result<Self, IdentifierError> {
         let value = value.into();
-        if value.trim().is_empty() {
-            return Err(IdentifierError::Blank);
-        }
+        nonblank(&value)?;
         Ok(Self(value))
     }
 
@@ -59,9 +57,7 @@ impl ProcessId {
     /// Creates a nonblank process identifier.
     pub fn new(value: impl Into<String>) -> Result<Self, IdentifierError> {
         let value = value.into();
-        if value.trim().is_empty() {
-            return Err(IdentifierError::Blank);
-        }
+        nonblank(&value)?;
         Ok(Self(value))
     }
 
@@ -79,22 +75,22 @@ impl fmt::Display for ProcessId {
 
 /// Declares one stock and its conserved kind.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StockSpec {
+pub struct StockSpec<K> {
     /// Stable identifier used by flows and queries.
     pub id: StockId,
     /// Quantity kind stored here.
-    pub kind: KindId,
+    pub kind: K,
     /// Exact initial amount.
     pub initial: BigRational,
 }
 
 /// A flow request before resource limitation.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ProposedFlow {
+pub struct ProposedFlow<K> {
     /// Process responsible for the request.
     pub process: ProcessId,
     /// Conserved kind being moved.
-    pub kind: KindId,
+    pub kind: K,
     /// Source stock, or `None` for a boundary input.
     pub source: Option<StockId>,
     /// Target stock, or `None` for a boundary output.
@@ -116,11 +112,11 @@ pub enum FlowRole {
 
 /// An exact flow after simultaneous resource limitation.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AppliedFlow {
+pub struct AppliedFlow<K> {
     /// Process responsible for the flow.
     pub process: ProcessId,
     /// Conserved kind moved by the flow.
-    pub kind: KindId,
+    pub kind: K,
     /// Source stock, absent for an input.
     pub source: Option<StockId>,
     /// Target stock, absent for an output.
@@ -135,13 +131,13 @@ pub struct AppliedFlow {
 
 /// Result of one atomic settlement batch.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SettlementReport {
-    applied: Vec<AppliedFlow>,
+pub struct SettlementReport<K> {
+    applied: Vec<AppliedFlow<K>>,
 }
 
-impl SettlementReport {
+impl<K: Kind> SettlementReport<K> {
     /// Returns settled flows in proposal order.
-    pub fn flows(&self) -> &[AppliedFlow] {
+    pub fn flows(&self) -> &[AppliedFlow<K>] {
         &self.applied
     }
 
@@ -158,7 +154,7 @@ impl SettlementReport {
 /// Invalid stock declarations or flow batches.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
-pub enum StockFlowError {
+pub enum StockFlowError<K> {
     /// A system must contain at least one stock.
     NoStocks,
     /// The same stock identifier was declared twice.
@@ -176,9 +172,9 @@ pub enum StockFlowError {
         /// Referenced stock.
         stock: StockId,
         /// Kind declared by the stock.
-        stock_kind: KindId,
+        stock_kind: K,
         /// Kind declared by the flow.
-        flow_kind: KindId,
+        flow_kind: K,
     },
     /// A compiled state's amount vector has the wrong length.
     AmountCount {
@@ -195,7 +191,7 @@ pub enum StockFlowError {
     ArithmeticOverflow,
 }
 
-impl fmt::Display for StockFlowError {
+impl<K: Kind> fmt::Display for StockFlowError<K> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NoStocks => formatter.write_str("a stock-flow system needs at least one stock"),
@@ -229,24 +225,24 @@ impl fmt::Display for StockFlowError {
     }
 }
 
-impl Error for StockFlowError {}
+impl<K: Kind> Error for StockFlowError<K> {}
 
 /// A data-oriented stock state with exact boundary accounts and event history.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StockFlowSystem {
+pub struct StockFlowSystem<K> {
     stocks: Vec<StockId>,
-    kinds: Vec<KindId>,
+    kinds: Vec<K>,
     indices: BTreeMap<StockId, usize>,
     amounts: Vec<BigRational>,
-    initial: BTreeMap<KindId, BigRational>,
-    inputs: BTreeMap<KindId, BigRational>,
-    outputs: BTreeMap<KindId, BigRational>,
-    history: Vec<AppliedFlow>,
+    initial: BTreeMap<K, BigRational>,
+    inputs: BTreeMap<K, BigRational>,
+    outputs: BTreeMap<K, BigRational>,
+    history: Vec<AppliedFlow<K>>,
 }
 
-impl StockFlowSystem {
+impl<K: Kind> StockFlowSystem<K> {
     /// Constructs a system from typed, nonnegative stock declarations.
-    pub fn new(specs: impl IntoIterator<Item = StockSpec>) -> Result<Self, StockFlowError> {
+    pub fn new(specs: impl IntoIterator<Item = StockSpec<K>>) -> Result<Self, StockFlowError<K>> {
         let specs: Vec<_> = specs.into_iter().collect();
         if specs.is_empty() {
             return Err(StockFlowError::NoStocks);
@@ -256,7 +252,7 @@ impl StockFlowSystem {
         let mut stocks = Vec::with_capacity(specs.len());
         let mut kinds = Vec::with_capacity(specs.len());
         let mut amounts = Vec::with_capacity(specs.len());
-        let mut initial = BTreeMap::<KindId, BigRational>::new();
+        let mut initial = BTreeMap::<K, BigRational>::new();
         for spec in specs {
             if spec.initial.is_negative() {
                 return Err(StockFlowError::NegativeAmount);
@@ -264,7 +260,7 @@ impl StockFlowSystem {
             if !seen.insert(spec.id.clone()) {
                 return Err(StockFlowError::DuplicateStock(spec.id));
             }
-            *initial.entry(spec.kind.clone()).or_default() += &spec.initial;
+            *initial.entry(spec.kind).or_default() += &spec.initial;
             stocks.push(spec.id);
             kinds.push(spec.kind);
             amounts.push(spec.initial);
@@ -294,44 +290,44 @@ impl StockFlowSystem {
     }
 
     /// Returns the current total of a conserved kind.
-    pub fn total(&self, kind: &KindId) -> BigRational {
+    pub fn total(&self, kind: K) -> BigRational {
         self.amounts
             .iter()
             .zip(&self.kinds)
-            .filter(|(_, stock_kind)| *stock_kind == kind)
+            .filter(|(_, stock_kind)| **stock_kind == kind)
             .map(|(amount, _)| amount.clone())
             .sum()
     }
 
     /// Returns cumulative boundary input for a kind.
-    pub fn inputs(&self, kind: &KindId) -> BigRational {
-        self.inputs.get(kind).cloned().unwrap_or_default()
+    pub fn inputs(&self, kind: K) -> BigRational {
+        self.inputs.get(&kind).cloned().unwrap_or_default()
     }
 
     /// Returns cumulative boundary output for a kind.
-    pub fn outputs(&self, kind: &KindId) -> BigRational {
-        self.outputs.get(kind).cloned().unwrap_or_default()
+    pub fn outputs(&self, kind: K) -> BigRational {
+        self.outputs.get(&kind).cloned().unwrap_or_default()
     }
 
     /// Returns `initial + inputs - outputs - current` exactly.
-    pub fn balance_residual(&self, kind: &KindId) -> BigRational {
-        self.initial.get(kind).cloned().unwrap_or_default() + self.inputs(kind)
+    pub fn balance_residual(&self, kind: K) -> BigRational {
+        self.initial.get(&kind).cloned().unwrap_or_default() + self.inputs(kind)
             - self.outputs(kind)
             - self.total(kind)
     }
 
     /// Returns all accepted flows across batches.
-    pub fn history(&self) -> &[AppliedFlow] {
+    pub fn history(&self) -> &[AppliedFlow<K>] {
         &self.history
     }
 
     /// Validates and atomically settles one simultaneous batch.
     pub fn settle(
         &mut self,
-        proposals: &[ProposedFlow],
-    ) -> Result<SettlementReport, StockFlowError> {
-        struct Resolved<'a> {
-            proposal: &'a ProposedFlow,
+        proposals: &[ProposedFlow<K>],
+    ) -> Result<SettlementReport<K>, StockFlowError<K>> {
+        struct Resolved<'a, K> {
+            proposal: &'a ProposedFlow<K>,
             source: Option<usize>,
             target: Option<usize>,
             role: FlowRole,
@@ -346,12 +342,12 @@ impl StockFlowSystem {
             let source = proposal
                 .source
                 .as_ref()
-                .map(|stock| self.resolve(stock, &proposal.kind))
+                .map(|stock| self.resolve(stock, proposal.kind))
                 .transpose()?;
             let target = proposal
                 .target
                 .as_ref()
-                .map(|stock| self.resolve(stock, &proposal.kind))
+                .map(|stock| self.resolve(stock, proposal.kind))
                 .transpose()?;
             let role = match (source, target) {
                 (None, None) => return Err(StockFlowError::DisconnectedFlow),
@@ -386,8 +382,8 @@ impl StockFlowSystem {
             .collect();
         let mut deltas = vec![BigRational::zero(); self.amounts.len()];
         let mut applied = Vec::with_capacity(resolved.len());
-        let mut batch_inputs = BTreeMap::<KindId, BigRational>::new();
-        let mut batch_outputs = BTreeMap::<KindId, BigRational>::new();
+        let mut batch_inputs = BTreeMap::<K, BigRational>::new();
+        let mut batch_outputs = BTreeMap::<K, BigRational>::new();
 
         for flow in resolved {
             let amount = flow.source.map_or_else(
@@ -397,16 +393,16 @@ impl StockFlowSystem {
             if let Some(source) = flow.source {
                 deltas[source] -= &amount;
             } else {
-                *batch_inputs.entry(flow.proposal.kind.clone()).or_default() += &amount;
+                *batch_inputs.entry(flow.proposal.kind).or_default() += &amount;
             }
             if let Some(target) = flow.target {
                 deltas[target] += &amount;
             } else {
-                *batch_outputs.entry(flow.proposal.kind.clone()).or_default() += &amount;
+                *batch_outputs.entry(flow.proposal.kind).or_default() += &amount;
             }
             applied.push(AppliedFlow {
                 process: flow.proposal.process.clone(),
-                kind: flow.proposal.kind.clone(),
+                kind: flow.proposal.kind,
                 source: flow.proposal.source.clone(),
                 target: flow.proposal.target.clone(),
                 requested: flow.proposal.amount.clone(),
@@ -430,17 +426,17 @@ impl StockFlowSystem {
         Ok(SettlementReport { applied })
     }
 
-    fn resolve(&self, stock: &StockId, flow_kind: &KindId) -> Result<usize, StockFlowError> {
+    fn resolve(&self, stock: &StockId, flow_kind: K) -> Result<usize, StockFlowError<K>> {
         let index = self
             .indices
             .get(stock)
             .copied()
             .ok_or_else(|| StockFlowError::UnknownStock(stock.clone()))?;
-        if &self.kinds[index] != flow_kind {
+        if self.kinds[index] != flow_kind {
             return Err(StockFlowError::KindMismatch {
                 stock: stock.clone(),
-                stock_kind: self.kinds[index].clone(),
-                flow_kind: flow_kind.clone(),
+                stock_kind: self.kinds[index],
+                flow_kind,
             });
         }
         Ok(index)
