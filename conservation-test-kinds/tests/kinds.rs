@@ -23,6 +23,15 @@ fn kinds_report_affine_role_and_floor() {
     assert_eq!(TestKind::MaterialBalance.floor(), None);
     assert_eq!(TestKind::Material.affine(), Affine::Linear);
     assert_eq!(TestKind::Material.difference(), TestKind::Material);
+    assert_eq!(
+        TestKind::Enthalpy.affine(),
+        Affine::Point {
+            difference: TestKind::Heat
+        }
+    );
+    assert_eq!(TestKind::Enthalpy.floor(), None);
+    assert_eq!(TestKind::Heat.floor(), None);
+    assert_eq!(TestKind::Reserve.floor(), Some(q(10)));
 }
 
 #[test]
