@@ -10,10 +10,10 @@ readme.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-conservation-core = { version = "0.1.0", path = "../conservation-core" }
-conservation-dynamics = { version = "0.1.0", path = "../conservation-dynamics" }
-conservation-linear = { version = "0.1.0", path = "../conservation-linear" }
-conservation-trace = { version = "0.1.0", path = "../conservation-trace" }
+conservation-core = { version = "0.2.0", path = "../conservation-core" }
+conservation-dynamics = { version = "0.2.0", path = "../conservation-dynamics" }
+conservation-linear = { version = "0.2.0", path = "../conservation-linear" }
+conservation-trace = { version = "0.2.0", path = "../conservation-trace" }
 num-rational.workspace = true
 num-traits.workspace = true
 

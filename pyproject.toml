@@ -1,6 +1,6 @@
 [project]
 name = "conservation-exchange"
-version = "0.2.0"
+version = "0.3.0"
 description = "Exact coupled exchanges with atomic quantity and participant publication"
 readme = "conservation-exchange/README.md"
 license = "MIT"

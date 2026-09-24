@@ -10,7 +10,7 @@ readme.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-conservation-core = { version = "0.1.0", path = "../conservation-core" }
+conservation-core = { version = "0.2.0", path = "../conservation-core" }
 num-bigint.workspace = true
 num-integer.workspace = true
 num-rational.workspace = true
