@@ -1,8 +1,10 @@
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use conservation_dynamics::{
-    DenseState, DenseTolerance, ExactState, FlowRole, FlowSpec, FlowTopology, ProcessId,
-    ProposedFlow, StockDefinition, StockFlowError, StockFlowSystem, StockId, StockSpec,
+    DenseState, DenseTolerance, ExactState, FlowRole, FlowSpec, FlowTopology, ProcessDefinition,
+    ProcessId, ProposedFlow, Rationing, StockDefinition, StockFlowError, StockFlowSystem, StockId,
+    StockSpec,
 };
 use conservation_test_kinds::TestKind;
 use num_bigint::BigInt;
@@ -43,6 +45,26 @@ fn flow(
     }
 }
 
+fn declare(process_name: &str, rationing: Rationing) -> ProcessDefinition {
+    ProcessDefinition {
+        id: process(process_name),
+        rationing,
+    }
+}
+
+fn ration_all(flows: &[FlowSpec<TestKind>]) -> Vec<ProcessDefinition> {
+    flows
+        .iter()
+        .map(|flow| flow.process.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .map(|id| ProcessDefinition {
+            id,
+            rationing: Rationing::Ration,
+        })
+        .collect()
+}
+
 fn material_topology() -> Arc<FlowTopology<TestKind>> {
     Arc::new(
         FlowTopology::new(
@@ -54,6 +76,10 @@ fn material_topology() -> Arc<FlowTopology<TestKind>> {
                 flow("input", TestKind::Material, None, Some("a")),
                 flow("move", TestKind::Material, Some("a"), Some("b")),
                 flow("export", TestKind::Material, Some("a"), None),
+            ],
+            [
+                declare("move", Rationing::Ration),
+                declare("export", Rationing::Ration),
             ],
         )
         .unwrap(),
@@ -96,7 +122,7 @@ fn compilation_assigns_stable_stock_kind_process_and_endpoint_indices() {
 #[test]
 fn topology_compilation_rejects_every_malformed_shape() {
     assert_eq!(
-        FlowTopology::new([], std::iter::empty::<FlowSpec<TestKind>>()),
+        FlowTopology::new([], std::iter::empty::<FlowSpec<TestKind>>(), []),
         Err(StockFlowError::NoStocks)
     );
     assert!(matches!(
@@ -105,6 +131,7 @@ fn topology_compilation_rejects_every_malformed_shape() {
                 definition("a", TestKind::Material),
                 definition("a", TestKind::Material)
             ],
+            [],
             []
         ),
         Err(StockFlowError::DuplicateStock(_))
@@ -112,14 +139,16 @@ fn topology_compilation_rejects_every_malformed_shape() {
     assert_eq!(
         FlowTopology::new(
             [definition("a", TestKind::Material)],
-            [flow("lost", TestKind::Material, None, None)]
+            [flow("lost", TestKind::Material, None, None)],
+            []
         ),
         Err(StockFlowError::DisconnectedFlow)
     );
     assert!(matches!(
         FlowTopology::new(
             [definition("a", TestKind::Material)],
-            [flow("loop", TestKind::Material, Some("a"), Some("a"))]
+            [flow("loop", TestKind::Material, Some("a"), Some("a"))],
+            []
         ),
         Err(StockFlowError::SameStock(_))
     ));
@@ -131,7 +160,8 @@ fn topology_compilation_rejects_every_malformed_shape() {
                 TestKind::Material,
                 Some("a"),
                 Some("missing")
-            )]
+            )],
+            []
         ),
         Err(StockFlowError::UnknownStock(_))
     ));
@@ -141,10 +171,55 @@ fn topology_compilation_rejects_every_malformed_shape() {
                 definition("a", TestKind::Material),
                 definition("b", TestKind::Energy)
             ],
-            [flow("wrong-kind", TestKind::Material, Some("a"), Some("b"))]
+            [flow("wrong-kind", TestKind::Material, Some("a"), Some("b"))],
+            []
         ),
         Err(StockFlowError::KindMismatch { .. })
     ));
+}
+
+#[test]
+fn flows_carry_the_difference_kind_of_a_point_stock() {
+    assert!(
+        FlowTopology::new(
+            [definition("body", TestKind::Temperature)],
+            [flow("warm", TestKind::TemperatureDelta, None, Some("body"))],
+            []
+        )
+        .is_ok()
+    );
+    assert_eq!(
+        FlowTopology::new(
+            [definition("body", TestKind::Temperature)],
+            [flow("warm", TestKind::Temperature, None, Some("body"))],
+            []
+        ),
+        Err(StockFlowError::KindMismatch {
+            stock: stock("body"),
+            stock_kind: TestKind::Temperature,
+            flow_kind: TestKind::Temperature,
+        })
+    );
+}
+
+#[test]
+fn a_transfer_between_balances_that_share_a_difference_is_rejected() {
+    assert_eq!(
+        FlowTopology::new(
+            [
+                definition("region", TestKind::Enthalpy),
+                definition("sink", TestKind::Heat),
+            ],
+            [flow("leak", TestKind::Heat, Some("region"), Some("sink"))],
+            []
+        ),
+        Err(StockFlowError::TransferKinds {
+            source: stock("region"),
+            source_kind: TestKind::Enthalpy,
+            target: stock("sink"),
+            target_kind: TestKind::Heat,
+        })
+    );
 }
 
 #[test]
@@ -222,7 +297,11 @@ fn invalid_compiled_batches_are_atomic_in_both_backends() {
 
     assert_eq!(
         exact.settle(&[integer(0), integer(-1), integer(0)]),
-        Err(StockFlowError::NegativeAmount)
+        Err(StockFlowError::NegativeFlow {
+            index: 1,
+            process: process("move"),
+            amount: Box::new(integer(-1)),
+        })
     );
     assert_eq!(
         dense.settle(&[0.0, f64::NAN, 0.0]),
@@ -298,16 +377,18 @@ fn dense_reusable_workspace_recovers_from_late_failure_stages() {
 
     // Two individually finite inputs overflow their shared kind's batch
     // account after all flow and next-amount buffers have been populated.
+    let input_flows = [
+        flow("input-a", TestKind::Material, None, Some("a")),
+        flow("input-b", TestKind::Material, None, Some("b")),
+    ];
     let input_topology = Arc::new(
         FlowTopology::new(
             [
                 definition("a", TestKind::Material),
                 definition("b", TestKind::Material),
             ],
-            [
-                flow("input-a", TestKind::Material, None, Some("a")),
-                flow("input-b", TestKind::Material, None, Some("b")),
-            ],
+            input_flows.clone(),
+            ration_all(&input_flows),
         )
         .unwrap(),
     );
@@ -331,7 +412,11 @@ fn dense_construction_and_settlement_reject_aggregate_overflow() {
     let topology = material_topology();
     assert_eq!(
         DenseState::new(topology.clone(), vec![-1.0, 0.0]),
-        Err(StockFlowError::NegativeAmount)
+        Err(StockFlowError::InitialBelowFloor {
+            stock: stock("a"),
+            floor: Box::new(integer(0)),
+            amount: Box::new(integer(-1)),
+        })
     );
     assert_eq!(
         DenseState::new(topology.clone(), vec![f64::INFINITY, 0.0]),
@@ -403,18 +488,25 @@ fn dense_discard_path_matches_owned_reports_and_remains_atomic() {
 fn compiled_exact_state_agrees_with_the_independent_legacy_settlement_path() {
     let topology = material_topology();
     let mut compiled = ExactState::new(topology.clone(), vec![integer(10), integer(0)]).unwrap();
-    let mut legacy = StockFlowSystem::new([
-        StockSpec {
-            id: stock("a"),
-            kind: TestKind::Material,
-            initial: integer(10),
-        },
-        StockSpec {
-            id: stock("b"),
-            kind: TestKind::Material,
-            initial: integer(0),
-        },
-    ])
+    let mut legacy = StockFlowSystem::new(
+        [
+            StockSpec {
+                id: stock("a"),
+                kind: TestKind::Material,
+                initial: integer(10),
+            },
+            StockSpec {
+                id: stock("b"),
+                kind: TestKind::Material,
+                initial: integer(0),
+            },
+        ],
+        [
+            declare("input", Rationing::Ration),
+            declare("move", Rationing::Ration),
+            declare("export", Rationing::Ration),
+        ],
+    )
     .unwrap();
 
     let compiled_report = compiled
@@ -452,16 +544,18 @@ fn exact_report_materialization_rejects_a_different_equal_length_topology() {
     let structurally_equal = material_topology();
     assert!(structurally_equal.materialize_exact_report(&report).is_ok());
 
+    let different_flows = [
+        flow("other-input", TestKind::Material, None, Some("a")),
+        flow("other-move", TestKind::Material, Some("b"), Some("a")),
+        flow("other-export", TestKind::Material, Some("b"), None),
+    ];
     let different = FlowTopology::new(
         [
             definition("a", TestKind::Material),
             definition("b", TestKind::Material),
         ],
-        [
-            flow("other-input", TestKind::Material, None, Some("a")),
-            flow("other-move", TestKind::Material, Some("b"), Some("a")),
-            flow("other-export", TestKind::Material, Some("b"), None),
-        ],
+        different_flows.clone(),
+        ration_all(&different_flows),
     )
     .unwrap();
     assert_eq!(
@@ -472,6 +566,22 @@ fn exact_report_materialization_rejects_a_different_equal_length_topology() {
 
 #[test]
 fn each_conserved_kind_balances_independently() {
+    let flows = [
+        flow(
+            "matter_move",
+            TestKind::Matter,
+            Some("matter_a"),
+            Some("matter_b"),
+        ),
+        flow("matter_input", TestKind::Matter, None, Some("matter_a")),
+        flow(
+            "energy_move",
+            TestKind::Energy,
+            Some("energy_a"),
+            Some("energy_b"),
+        ),
+        flow("energy_output", TestKind::Energy, Some("energy_a"), None),
+    ];
     let topology = Arc::new(
         FlowTopology::new(
             [
@@ -480,22 +590,8 @@ fn each_conserved_kind_balances_independently() {
                 definition("energy_a", TestKind::Energy),
                 definition("energy_b", TestKind::Energy),
             ],
-            [
-                flow(
-                    "matter_move",
-                    TestKind::Matter,
-                    Some("matter_a"),
-                    Some("matter_b"),
-                ),
-                flow("matter_input", TestKind::Matter, None, Some("matter_a")),
-                flow(
-                    "energy_move",
-                    TestKind::Energy,
-                    Some("energy_a"),
-                    Some("energy_b"),
-                ),
-                flow("energy_output", TestKind::Energy, Some("energy_a"), None),
-            ],
+            flows.clone(),
+            ration_all(&flows),
         )
         .unwrap(),
     );
@@ -523,27 +619,26 @@ fn flow_declaration_permutation_does_not_change_observable_accounts() {
         definition("a", TestKind::Material),
         definition("b", TestKind::Material),
     ];
+    let forward_flows = [
+        flow("move", TestKind::Material, Some("a"), Some("b")),
+        flow("export", TestKind::Material, Some("a"), None),
+        flow("input", TestKind::Material, None, Some("b")),
+    ];
+    let reverse_flows = [
+        flow("input", TestKind::Material, None, Some("b")),
+        flow("export", TestKind::Material, Some("a"), None),
+        flow("move", TestKind::Material, Some("a"), Some("b")),
+    ];
     let forward = Arc::new(
         FlowTopology::new(
             stocks.clone(),
-            [
-                flow("move", TestKind::Material, Some("a"), Some("b")),
-                flow("export", TestKind::Material, Some("a"), None),
-                flow("input", TestKind::Material, None, Some("b")),
-            ],
+            forward_flows.clone(),
+            ration_all(&forward_flows),
         )
         .unwrap(),
     );
     let reverse = Arc::new(
-        FlowTopology::new(
-            stocks,
-            [
-                flow("input", TestKind::Material, None, Some("b")),
-                flow("export", TestKind::Material, Some("a"), None),
-                flow("move", TestKind::Material, Some("a"), Some("b")),
-            ],
-        )
-        .unwrap(),
+        FlowTopology::new(stocks, reverse_flows.clone(), ration_all(&reverse_flows)).unwrap(),
     );
     let mut exact_forward =
         ExactState::new(forward.clone(), vec![integer(10), integer(0)]).unwrap();
@@ -596,8 +691,10 @@ fn dense_permutation_is_stable_across_adversarial_dynamic_range() {
     );
     let mut reversed_flows = flows.clone();
     reversed_flows.reverse();
-    let forward = Arc::new(FlowTopology::new(stocks.clone(), flows).unwrap());
-    let reverse = Arc::new(FlowTopology::new(stocks, reversed_flows).unwrap());
+    let forward_processes = ration_all(&flows);
+    let reverse_processes = ration_all(&reversed_flows);
+    let forward = Arc::new(FlowTopology::new(stocks.clone(), flows, forward_processes).unwrap());
+    let reverse = Arc::new(FlowTopology::new(stocks, reversed_flows, reverse_processes).unwrap());
     let mut forward_state = DenseState::new(forward, vec![1e16, 0.0, 0.0]).unwrap();
     let mut reverse_state = DenseState::new(reverse, vec![1e16, 0.0, 0.0]).unwrap();
     let mut forward_requests = vec![1.0; 2_001];
@@ -623,15 +720,18 @@ fn dense_settles_a_valid_eleven_thousand_way_proportional_batch() {
         definition("source", TestKind::Material),
         definition("target", TestKind::Material),
     ];
-    let flows = (0..FANOUT).map(|index| {
-        flow(
-            &format!("branch-{index}"),
-            TestKind::Material,
-            Some("source"),
-            Some("target"),
-        )
-    });
-    let topology = Arc::new(FlowTopology::new(stocks, flows).unwrap());
+    let flows: Vec<_> = (0..FANOUT)
+        .map(|index| {
+            flow(
+                &format!("branch-{index}"),
+                TestKind::Material,
+                Some("source"),
+                Some("target"),
+            )
+        })
+        .collect();
+    let processes = ration_all(&flows);
+    let topology = Arc::new(FlowTopology::new(stocks, flows, processes).unwrap());
     let mut state = DenseState::new(topology, vec![1.0, 0.0]).unwrap();
 
     let report = state.settle(&vec![1.0; FANOUT]).unwrap();
@@ -663,8 +763,10 @@ fn dense_source_overflow_rejection_is_independent_of_flow_order() {
     flows.extend((0..3).map(|_| flow("small", TestKind::Material, Some("source"), Some("target"))));
     let mut reversed_flows = flows.clone();
     reversed_flows.reverse();
-    let forward = Arc::new(FlowTopology::new(stocks.clone(), flows).unwrap());
-    let reverse = Arc::new(FlowTopology::new(stocks, reversed_flows).unwrap());
+    let forward_processes = ration_all(&flows);
+    let reverse_processes = ration_all(&reversed_flows);
+    let forward = Arc::new(FlowTopology::new(stocks.clone(), flows, forward_processes).unwrap());
+    let reverse = Arc::new(FlowTopology::new(stocks, reversed_flows, reverse_processes).unwrap());
     let mut forward_state = DenseState::new(forward, vec![f64::MAX, 0.0]).unwrap();
     let mut reverse_state = DenseState::new(reverse, vec![f64::MAX, 0.0]).unwrap();
     let small = 2.0_f64.powi(969);
@@ -688,13 +790,15 @@ fn dense_source_overflow_rejection_is_independent_of_flow_order() {
 
 #[test]
 fn dense_balance_diagnostics_do_not_overflow_on_cancelling_maxima() {
+    let flows = [
+        flow("input", TestKind::Material, None, Some("stock")),
+        flow("output", TestKind::Material, Some("stock"), None),
+    ];
     let topology = Arc::new(
         FlowTopology::new(
             [definition("stock", TestKind::Material)],
-            [
-                flow("input", TestKind::Material, None, Some("stock")),
-                flow("output", TestKind::Material, Some("stock"), None),
-            ],
+            flows.clone(),
+            ration_all(&flows),
         )
         .unwrap(),
     );
@@ -733,8 +837,414 @@ fn compiled_amount_count_and_nonfinite_failures_are_atomic() {
     assert_eq!(dense, dense_before);
 }
 
+fn exact_and_dense(
+    stocks: &[(&str, TestKind)],
+    flows: &[FlowSpec<TestKind>],
+    processes: Vec<ProcessDefinition>,
+    initial: &[i64],
+) -> (ExactState<TestKind>, DenseState<TestKind>) {
+    let topology = Arc::new(
+        FlowTopology::new(
+            stocks.iter().map(|(id, kind)| definition(id, *kind)),
+            flows.to_vec(),
+            processes,
+        )
+        .unwrap(),
+    );
+    let exact = ExactState::new(
+        topology.clone(),
+        initial.iter().copied().map(integer).collect(),
+    )
+    .unwrap();
+    let dense = DenseState::new(
+        topology,
+        initial.iter().map(|value| *value as f64).collect(),
+    )
+    .unwrap();
+    (exact, dense)
+}
+
+#[test]
+fn floorless_stock_starts_negative_and_settles_below_zero_in_both_backends() {
+    let (mut exact, mut dense) = exact_and_dense(
+        &[("a", TestKind::MaterialBalance)],
+        &[flow("export", TestKind::MaterialBalance, Some("a"), None)],
+        Vec::new(),
+        &[-2],
+    );
+
+    exact.settle(&[integer(5)]).unwrap();
+    dense.settle(&[5.0]).unwrap();
+
+    assert_eq!(exact.amounts(), &[integer(-7)]);
+    assert_eq!(dense.amounts(), &[-7.0]);
+    assert!(exact.balance_residual(TestKind::MaterialBalance).is_zero());
+    assert_eq!(dense.balance_residual(TestKind::MaterialBalance), 0.0);
+    assert!(dense.balance_within(TestKind::MaterialBalance, DenseTolerance::default()));
+}
+
+#[test]
+fn cooling_trace_does_not_depend_on_the_enthalpy_reference() {
+    let topology = Arc::new(
+        FlowTopology::new(
+            [definition("region", TestKind::Enthalpy)],
+            [
+                flow("bath_exchange", TestKind::Heat, None, Some("region")),
+                flow("bath_exchange", TestKind::Heat, Some("region"), None),
+            ],
+            [],
+        )
+        .unwrap(),
+    );
+    let capacity = integer(1000);
+    // T₇ = 300 + 100·(9/10)⁷ = 347.82969.
+    let expected = integer(300) + BigRational::new(BigInt::from(4_782_969), BigInt::from(100_000));
+
+    for reference in [300_i64, 350] {
+        let reference_exact = integer(reference);
+        let mut exact = ExactState::new(
+            topology.clone(),
+            vec![(integer(400) - &reference_exact) * &capacity],
+        )
+        .unwrap();
+        let mut dense =
+            DenseState::new(topology.clone(), vec![(400.0 - reference as f64) * 1000.0]).unwrap();
+
+        for _ in 0..7 {
+            let temperature = &reference_exact + &exact.amounts()[0] / &capacity;
+            let heat = integer(100) * (integer(300) - temperature);
+            let slots = if heat.is_negative() {
+                [integer(0), -heat]
+            } else {
+                [heat, integer(0)]
+            };
+            exact.settle(&slots).unwrap();
+
+            let dense_temperature = reference as f64 + dense.amounts()[0] / 1000.0;
+            let dense_heat = 100.0 * (300.0 - dense_temperature);
+            let dense_slots = if dense_heat < 0.0 {
+                [0.0, -dense_heat]
+            } else {
+                [dense_heat, 0.0]
+            };
+            dense.settle(&dense_slots).unwrap();
+        }
+
+        assert_eq!(&reference_exact + &exact.amounts()[0] / &capacity, expected);
+        assert!(DenseTolerance::default().contains(
+            reference as f64 + dense.amounts()[0] / 1000.0,
+            expected.to_f64().unwrap()
+        ));
+    }
+
+    let below_reference = integer(1000) * (integer(340) - integer(350));
+    assert!(ExactState::new(topology.clone(), vec![below_reference]).is_ok());
+    assert!(DenseState::new(topology, vec![1000.0 * (340.0 - 350.0)]).is_ok());
+}
+
+#[test]
+fn signed_stock_settles_from_plus_two_to_minus_three_through_one_flow() {
+    let (mut exact, mut dense) = exact_and_dense(
+        &[
+            ("p", TestKind::MaterialBalance),
+            ("q", TestKind::MaterialBalance),
+        ],
+        &[flow(
+            "push",
+            TestKind::MaterialBalance,
+            Some("p"),
+            Some("q"),
+        )],
+        Vec::new(),
+        &[2, 0],
+    );
+
+    exact.settle(&[integer(5)]).unwrap();
+    dense.settle(&[5.0]).unwrap();
+
+    assert_eq!(exact.amounts(), &[integer(-3), integer(5)]);
+    assert_eq!(dense.amounts(), &[-3.0, 5.0]);
+    assert!(exact.balance_residual(TestKind::MaterialBalance).is_zero());
+    assert_eq!(dense.balance_residual(TestKind::MaterialBalance), 0.0);
+}
+
+fn below_floor(
+    stock_name: &str,
+    floor: i64,
+    process_name: &str,
+    available: i64,
+    withdrawal: i64,
+) -> StockFlowError<TestKind> {
+    StockFlowError::BelowFloor {
+        stock: stock(stock_name),
+        floor: Box::new(integer(floor)),
+        process: process(process_name),
+        available: Box::new(integer(available)),
+        withdrawal: Box::new(integer(withdrawal)),
+    }
+}
+
+#[test]
+fn withdrawal_below_floor_is_refused_naming_stock_floor_and_process() {
+    let (mut exact, mut dense) = exact_and_dense(
+        &[("vault", TestKind::Reserve)],
+        &[flow("spend", TestKind::Reserve, Some("vault"), None)],
+        Vec::new(),
+        &[12],
+    );
+    let exact_before = exact.clone();
+    let dense_before = dense.clone();
+    let expected = below_floor("vault", 10, "spend", 12, 5);
+
+    assert_eq!(exact.settle(&[integer(5)]), Err(expected.clone()));
+    assert_eq!(dense.settle(&[5.0]), Err(expected.clone()));
+    assert_eq!(exact, exact_before);
+    assert_eq!(dense, dense_before);
+
+    let mut system = StockFlowSystem::new(
+        [StockSpec {
+            id: stock("vault"),
+            kind: TestKind::Reserve,
+            initial: integer(12),
+        }],
+        [],
+    )
+    .unwrap();
+    let system_before = system.clone();
+    assert_eq!(
+        system.settle(&[ProposedFlow {
+            process: process("spend"),
+            kind: TestKind::Reserve,
+            source: Some(stock("vault")),
+            target: None,
+            amount: integer(5),
+        }]),
+        Err(expected.clone())
+    );
+    assert_eq!(system, system_before);
+
+    let message = expected.to_string();
+    for part in ["vault", "10", "spend"] {
+        assert!(message.contains(part), "{message}");
+    }
+}
+
+#[test]
+fn material_withdrawal_beyond_the_stock_is_refused_by_default() {
+    let (mut exact, mut dense) = exact_and_dense(
+        &[("a", TestKind::Material)],
+        &[flow("export", TestKind::Material, Some("a"), None)],
+        Vec::new(),
+        &[3],
+    );
+    let expected = below_floor("a", 0, "export", 3, 5);
+
+    assert_eq!(exact.settle(&[integer(5)]), Err(expected.clone()));
+    assert_eq!(dense.settle(&[5.0]), Err(expected));
+}
+
+#[test]
+fn a_refusing_process_sharing_a_breached_stock_refuses_the_batch() {
+    let (mut exact, mut dense) = exact_and_dense(
+        &[("vault", TestKind::Reserve)],
+        &[
+            flow("share", TestKind::Reserve, Some("vault"), None),
+            flow("spend", TestKind::Reserve, Some("vault"), None),
+        ],
+        vec![declare("share", Rationing::Ration)],
+        &[12],
+    );
+    let expected = below_floor("vault", 10, "spend", 12, 3);
+
+    assert_eq!(
+        exact.settle(&[integer(2), integer(1)]),
+        Err(expected.clone())
+    );
+    assert_eq!(dense.settle(&[2.0, 1.0]), Err(expected));
+}
+
+#[test]
+fn rationed_withdrawals_share_the_headroom_above_a_nonzero_floor() {
+    let (mut exact, mut dense) = exact_and_dense(
+        &[("vault", TestKind::Reserve)],
+        &[
+            flow("a", TestKind::Reserve, Some("vault"), None),
+            flow("b", TestKind::Reserve, Some("vault"), None),
+        ],
+        vec![
+            declare("a", Rationing::Ration),
+            declare("b", Rationing::Ration),
+        ],
+        &[12],
+    );
+
+    let exact_report = exact.settle(&[integer(3), integer(1)]).unwrap();
+    let dense_report = dense.settle(&[3.0, 1.0]).unwrap();
+
+    assert_eq!(
+        exact_report.applied(),
+        &[
+            BigRational::new(BigInt::from(3), BigInt::from(2)),
+            BigRational::new(BigInt::from(1), BigInt::from(2)),
+        ]
+    );
+    assert_eq!(exact.amounts(), &[integer(10)]);
+    assert_eq!(dense_report.applied(), &[1.5, 0.5]);
+    assert_eq!(dense.amounts(), &[10.0]);
+}
+
+#[test]
+fn floorless_stock_is_never_rationed() {
+    let (mut exact, mut dense) = exact_and_dense(
+        &[("m", TestKind::MaterialBalance)],
+        &[flow("draw", TestKind::MaterialBalance, Some("m"), None)],
+        vec![declare("draw", Rationing::Ration)],
+        &[1],
+    );
+
+    let exact_report = exact.settle(&[integer(5)]).unwrap();
+    let dense_report = dense.settle(&[5.0]).unwrap();
+
+    assert_eq!(exact_report.applied(), &[integer(5)]);
+    assert_eq!(exact.amounts(), &[integer(-4)]);
+    assert_eq!(dense_report.applied(), &[5.0]);
+    assert_eq!(dense.amounts(), &[-4.0]);
+}
+
+#[test]
+fn process_declarations_reject_unknown_and_duplicate_processes() {
+    let stocks = [
+        definition("a", TestKind::Material),
+        definition("b", TestKind::Material),
+    ];
+    let flows = [flow("move", TestKind::Material, Some("a"), Some("b"))];
+    assert_eq!(
+        FlowTopology::new(
+            stocks.clone(),
+            flows.clone(),
+            [declare("ghost", Rationing::Ration)]
+        ),
+        Err(StockFlowError::UnknownProcess(process("ghost")))
+    );
+    assert_eq!(
+        FlowTopology::new(
+            stocks,
+            flows,
+            [
+                declare("move", Rationing::Ration),
+                declare("move", Rationing::Refuse)
+            ]
+        ),
+        Err(StockFlowError::DuplicateProcess(process("move")))
+    );
+    assert_eq!(
+        StockFlowSystem::new(
+            [StockSpec {
+                id: stock("a"),
+                kind: TestKind::Material,
+                initial: integer(0),
+            }],
+            [
+                declare("move", Rationing::Ration),
+                declare("move", Rationing::Ration)
+            ]
+        ),
+        Err(StockFlowError::DuplicateProcess(process("move")))
+    );
+}
+
+#[test]
+fn topology_reports_declared_rationing() {
+    let topology = material_topology();
+    assert_eq!(
+        topology.rationing(&process("move")),
+        Some(Rationing::Ration)
+    );
+    assert_eq!(
+        topology.rationing(&process("input")),
+        Some(Rationing::Refuse)
+    );
+    assert_eq!(topology.rationing(&process("ghost")), None);
+}
+
+#[test]
+fn initial_amount_below_the_floor_is_rejected_naming_stock_and_floor() {
+    let topology = Arc::new(
+        FlowTopology::new(
+            [definition("vault", TestKind::Reserve)],
+            [flow("spend", TestKind::Reserve, Some("vault"), None)],
+            [],
+        )
+        .unwrap(),
+    );
+    let expected = StockFlowError::InitialBelowFloor {
+        stock: stock("vault"),
+        floor: Box::new(integer(10)),
+        amount: Box::new(integer(9)),
+    };
+
+    assert_eq!(
+        ExactState::new(topology.clone(), vec![integer(9)]),
+        Err(expected.clone())
+    );
+    assert_eq!(DenseState::new(topology, vec![9.0]), Err(expected.clone()));
+    assert_eq!(
+        StockFlowSystem::new(
+            [StockSpec {
+                id: stock("vault"),
+                kind: TestKind::Reserve,
+                initial: integer(9),
+            }],
+            [],
+        ),
+        Err(expected)
+    );
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(128))]
+
+    #[test]
+    fn exact_and_dense_agree_on_floor_refusal_and_rationing(
+        vault in 10_i64..1_000,
+        safe in 10_i64..1_000,
+        spend in 0_i64..1_000,
+        share in 0_i64..1_000,
+        drain in 0_i64..1_000,
+    ) {
+        let (mut exact, mut dense) = exact_and_dense(
+            &[("vault", TestKind::Reserve), ("safe", TestKind::Reserve)],
+            &[
+                flow("spend", TestKind::Reserve, Some("vault"), None),
+                flow("share", TestKind::Reserve, Some("vault"), Some("safe")),
+                flow("drain", TestKind::Reserve, Some("safe"), None),
+            ],
+            vec![declare("share", Rationing::Ration), declare("drain", Rationing::Ration)],
+            &[vault, safe],
+        );
+        let exact_result = exact.settle(&[integer(spend), integer(share), integer(drain)]);
+        let dense_result = dense.settle(&[spend as f64, share as f64, drain as f64]);
+        let tolerance = DenseTolerance::default();
+
+        match (exact_result, dense_result) {
+            (Err(exact_error), Err(dense_error)) => prop_assert_eq!(exact_error, dense_error),
+            (Ok(exact_report), Ok(dense_report)) => {
+                for (exact_amount, dense_amount) in exact.amounts().iter().zip(dense.amounts()) {
+                    prop_assert!(tolerance.contains(exact_amount.to_f64().unwrap(), *dense_amount));
+                    prop_assert!(*exact_amount >= integer(10));
+                    prop_assert!(*dense_amount >= 10.0);
+                }
+                for (exact_amount, dense_amount) in exact_report.applied().iter().zip(dense_report.applied()) {
+                    prop_assert!(tolerance.contains(exact_amount.to_f64().unwrap(), *dense_amount));
+                }
+                prop_assert!(exact.balance_residual(TestKind::Reserve).is_zero());
+                prop_assert!(dense.balance_within(TestKind::Reserve, tolerance));
+            }
+            (exact_result, dense_result) => {
+                prop_assert!(false, "exact {exact_result:?} but dense {dense_result:?}");
+            }
+        }
+    }
 
     #[test]
     fn dense_is_finite_nonnegative_balanced_and_agrees_with_exact(

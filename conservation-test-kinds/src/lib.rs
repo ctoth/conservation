@@ -17,12 +17,15 @@ pub enum TestKind {
     Charge,
     Energy,
     EnergyPerMaterial,
+    Enthalpy,
     Entropy,
+    Heat,
     Material,
     MaterialBalance,
     MaterialSquared,
     Matter,
     Ratio,
+    Reserve,
     Temperature,
     TemperatureDelta,
     Torque,
@@ -30,37 +33,43 @@ pub enum TestKind {
 
 impl TestKind {
     /// Every variant in declaration order.
-    pub const ALL: [TestKind; 13] = [
+    pub const ALL: [TestKind; 16] = [
         Self::Amount,
         Self::Charge,
         Self::Energy,
         Self::EnergyPerMaterial,
+        Self::Enthalpy,
         Self::Entropy,
+        Self::Heat,
         Self::Material,
         Self::MaterialBalance,
         Self::MaterialSquared,
         Self::Matter,
         Self::Ratio,
+        Self::Reserve,
         Self::Temperature,
         Self::TemperatureDelta,
         Self::Torque,
     ];
 
-    /// "amount", "charge", "energy", "energy_per_material", "entropy", "material",
-    /// "material_balance", "material_squared", "matter", "ratio", "temperature",
-    /// "temperature_delta", "torque".
+    /// "amount", "charge", "energy", "energy_per_material", "enthalpy", "entropy",
+    /// "heat", "material", "material_balance", "material_squared", "matter", "ratio",
+    /// "reserve", "temperature", "temperature_delta", "torque".
     pub const fn name(self) -> &'static str {
         match self {
             Self::Amount => "amount",
             Self::Charge => "charge",
             Self::Energy => "energy",
             Self::EnergyPerMaterial => "energy_per_material",
+            Self::Enthalpy => "enthalpy",
             Self::Entropy => "entropy",
+            Self::Heat => "heat",
             Self::Material => "material",
             Self::MaterialBalance => "material_balance",
             Self::MaterialSquared => "material_squared",
             Self::Matter => "matter",
             Self::Ratio => "ratio",
+            Self::Reserve => "reserve",
             Self::Temperature => "temperature",
             Self::TemperatureDelta => "temperature_delta",
             Self::Torque => "torque",
@@ -80,16 +89,21 @@ impl Kind for TestKind {
             Self::Temperature => Affine::Point {
                 difference: Self::TemperatureDelta,
             },
+            Self::Enthalpy => Affine::Point {
+                difference: Self::Heat,
+            },
             Self::Amount
             | Self::Charge
             | Self::Energy
             | Self::EnergyPerMaterial
             | Self::Entropy
+            | Self::Heat
             | Self::Material
             | Self::MaterialBalance
             | Self::MaterialSquared
             | Self::Matter
             | Self::Ratio
+            | Self::Reserve
             | Self::TemperatureDelta
             | Self::Torque => Affine::Linear,
         }
@@ -100,9 +114,12 @@ impl Kind for TestKind {
             Self::Amount | Self::Energy | Self::Material | Self::Matter | Self::Temperature => {
                 Some(BigRational::zero())
             }
+            Self::Reserve => Some(BigRational::from_integer(10.into())),
             Self::Charge
             | Self::EnergyPerMaterial
+            | Self::Enthalpy
             | Self::Entropy
+            | Self::Heat
             | Self::MaterialBalance
             | Self::MaterialSquared
             | Self::Ratio
@@ -187,9 +204,9 @@ impl DimensionAlgebra for TestKind {
         match self {
             Self::Amount => TestDimensions::base(0),
             Self::Charge => TestDimensions::base(1),
-            Self::Energy | Self::Torque => TestDimensions::base(2),
+            Self::Energy | Self::Enthalpy | Self::Heat | Self::Torque => TestDimensions::base(2),
             Self::Entropy => TestDimensions::base(3),
-            Self::Material | Self::MaterialBalance => TestDimensions::base(4),
+            Self::Material | Self::MaterialBalance | Self::Reserve => TestDimensions::base(4),
             Self::Matter => TestDimensions::base(5),
             Self::Temperature | Self::TemperatureDelta => TestDimensions::base(6),
             Self::Ratio => TestDimensions([0; 7]),

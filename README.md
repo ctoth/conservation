@@ -15,8 +15,10 @@ This Cargo workspace contains the following library crates:
   invariants.
 - `conservation-dynamics` compiles typed stocks and processes into one immutable
   indexed topology shared by exact-rational and finite-validated binary64
-  states. Each batch observes one pre-settlement state; competing withdrawals
-  receive a common proportional limit, while boundary inputs are unavailable
+  states. Each batch observes one pre-settlement state; withdrawals that would
+  breach a kind's floor are refused, or share a common proportional limit above
+  the floor when every withdrawing process is declared rationed; stocks of
+  floorless kinds may be negative, while boundary inputs are unavailable
   until the next batch. The exact state is an exact-arithmetic reference; the
   contiguous binary64 state is a candidate execution path with an explicit
   comparison tolerance and atomic overflow rejection. Performance claims wait

@@ -1,8 +1,29 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use conservation_core::Kind;
 
 use crate::{FlowRole, ProcessId, StockFlowError, StockId};
+
+/// What settlement does when a batch would take a floored stock below its
+/// kind's floor. Declared once per process.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum Rationing {
+    /// The batch is rejected with `StockFlowError::BelowFloor`.
+    #[default]
+    Refuse,
+    /// Withdrawals share the proportional limit `(available − floor) / withdrawal`,
+    /// but only when every process withdrawing from that stock is `Ration`.
+    Ration,
+}
+
+/// One process's declaration. A process that is not declared is `Refuse`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProcessDefinition {
+    /// The declared process.
+    pub id: ProcessId,
+    /// What settlement does when this process would breach a floor.
+    pub rationing: Rationing,
+}
 
 /// Immutable metadata for one stock in a compiled flow system.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -18,7 +39,7 @@ pub struct StockDefinition<K> {
 pub struct FlowSpec<K> {
     /// Process responsible for this flow slot.
     pub process: ProcessId,
-    /// Conserved quantity kind moved by the flow.
+    /// The kind of the amount moved: the endpoint stocks' `kind.difference()`.
     pub kind: K,
     /// Source stock, absent for a boundary input.
     pub source: Option<StockId>,
@@ -42,7 +63,7 @@ impl CompiledFlow {
         self.process
     }
 
-    /// Index into [`FlowTopology::kinds`].
+    /// Index into [`FlowTopology::kinds`] of the balance this flow enters.
     pub fn kind(&self) -> usize {
         self.kind
     }
@@ -77,14 +98,18 @@ pub struct FlowTopology<K> {
     kind_indices: BTreeMap<K, usize>,
     processes: Vec<ProcessId>,
     process_indices: BTreeMap<ProcessId, usize>,
+    rationing: Vec<Rationing>,
     flows: Vec<CompiledFlow>,
 }
 
 impl<K: Kind> FlowTopology<K> {
-    /// Compiles stock and flow declarations into a stable index layout.
+    /// Compiles stock, flow and process declarations into a stable index layout.
+    ///
+    /// A process with a flow but no declaration is [`Rationing::Refuse`].
     pub fn new(
         stocks: impl IntoIterator<Item = StockDefinition<K>>,
         flows: impl IntoIterator<Item = FlowSpec<K>>,
+        processes: impl IntoIterator<Item = ProcessDefinition>,
     ) -> Result<Self, StockFlowError<K>> {
         let stocks: Vec<_> = stocks.into_iter().collect();
         if stocks.is_empty() {
@@ -118,7 +143,7 @@ impl<K: Kind> FlowTopology<K> {
             stock_kinds.push(kind_index);
         }
 
-        let mut processes = Vec::new();
+        let mut process_ids = Vec::new();
         let mut process_indices = BTreeMap::new();
         let mut compiled = Vec::new();
         for flow in flows {
@@ -139,24 +164,30 @@ impl<K: Kind> FlowTopology<K> {
                 &stock_kinds,
                 &kinds,
             )?;
-            let kind = *kind_indices
-                .get(&flow.kind)
-                .expect("a connected, kind-valid flow references a declared kind");
-            let role = match (source, target) {
+            let (role, endpoint) = match (source, target) {
                 (None, None) => unreachable!("disconnected flows were rejected before resolution"),
                 (Some(source), Some(target)) if source == target => {
                     return Err(StockFlowError::SameStock(stock_ids[source].clone()));
                 }
-                (None, Some(_)) => FlowRole::Input,
-                (Some(_), None) => FlowRole::Output,
-                (Some(_), Some(_)) => FlowRole::Transfer,
+                (Some(source), Some(target)) if stock_kinds[source] != stock_kinds[target] => {
+                    return Err(StockFlowError::TransferKinds {
+                        source: stock_ids[source].clone(),
+                        source_kind: kinds[stock_kinds[source]],
+                        target: stock_ids[target].clone(),
+                        target_kind: kinds[stock_kinds[target]],
+                    });
+                }
+                (None, Some(target)) => (FlowRole::Input, target),
+                (Some(source), None) => (FlowRole::Output, source),
+                (Some(source), Some(_)) => (FlowRole::Transfer, source),
             };
+            let kind = stock_kinds[endpoint];
             let process = match process_indices.get(&flow.process) {
                 Some(index) => *index,
                 None => {
-                    let index = processes.len();
+                    let index = process_ids.len();
                     process_indices.insert(flow.process.clone(), index);
-                    processes.push(flow.process);
+                    process_ids.push(flow.process);
                     index
                 }
             };
@@ -169,16 +200,39 @@ impl<K: Kind> FlowTopology<K> {
             });
         }
 
+        let mut rationing = vec![Rationing::default(); process_ids.len()];
+        let mut declared = BTreeSet::new();
+        for process in processes {
+            if !declared.insert(process.id.clone()) {
+                return Err(StockFlowError::DuplicateProcess(process.id));
+            }
+            let Some(index) = process_indices.get(&process.id) else {
+                return Err(StockFlowError::UnknownProcess(process.id));
+            };
+            rationing[*index] = process.rationing;
+        }
+
         Ok(Self {
             stocks: stock_ids,
             stock_kinds,
             stock_indices,
             kinds,
             kind_indices,
-            processes,
+            processes: process_ids,
             process_indices,
+            rationing,
             flows: compiled,
         })
+    }
+
+    /// The declared rationing of a process with a flow in this topology.
+    pub fn rationing(&self, process: &ProcessId) -> Option<Rationing> {
+        self.process_index(process)
+            .map(|index| self.process_rationing(index))
+    }
+
+    pub(crate) fn process_rationing(&self, process: usize) -> Rationing {
+        self.rationing[process]
     }
 
     /// Stock identifiers in stable index order.
@@ -241,7 +295,7 @@ fn resolve_stock<K: Kind>(
                 .copied()
                 .ok_or_else(|| StockFlowError::UnknownStock(stock.clone()))?;
             let stock_kind = kinds[stock_kinds[index]];
-            if stock_kind != flow_kind {
+            if stock_kind.difference() != flow_kind {
                 return Err(StockFlowError::KindMismatch {
                     stock: stock.clone(),
                     stock_kind,

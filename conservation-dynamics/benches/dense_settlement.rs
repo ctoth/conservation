@@ -10,12 +10,14 @@
 //! baseline. A named local baseline can be recorded with
 //! `-- --save-baseline NAME` and compared later with `-- --baseline NAME`.
 
+use std::collections::BTreeSet;
 use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
 
 use conservation_dynamics::{
-    DenseState, FlowSpec, FlowTopology, ProcessId, StockDefinition, StockId,
+    DenseState, FlowSpec, FlowTopology, ProcessDefinition, ProcessId, Rationing, StockDefinition,
+    StockId,
 };
 use conservation_test_kinds::TestKind;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
@@ -24,6 +26,19 @@ struct Fixture {
     topology: Arc<FlowTopology<TestKind>>,
     initial: Vec<f64>,
     requested: Vec<f64>,
+}
+
+fn ration_all(flows: &[FlowSpec<TestKind>]) -> Vec<ProcessDefinition> {
+    flows
+        .iter()
+        .map(|flow| flow.process.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .map(|id| ProcessDefinition {
+            id,
+            rationing: Rationing::Ration,
+        })
+        .collect()
 }
 
 fn fixture(stock_count: usize) -> Fixture {
@@ -54,8 +69,9 @@ fn circulation_fixture(stock_count: usize, initial: f64, branch_requests: &[f64]
     let requested: Vec<_> = (0..stock_count)
         .flat_map(|_| branch_requests.iter().copied().take(fanout))
         .collect();
+    let processes = ration_all(&flows);
     Fixture {
-        topology: Arc::new(FlowTopology::new(stocks, flows).unwrap()),
+        topology: Arc::new(FlowTopology::new(stocks, flows, processes).unwrap()),
         initial: vec![initial; stock_count],
         requested,
     }
@@ -88,8 +104,9 @@ fn boundary_fixture(stock_count: usize) -> Fixture {
             ]
         })
         .collect();
+    let processes = ration_all(&flows);
     Fixture {
-        topology: Arc::new(FlowTopology::new(stocks, flows).unwrap()),
+        topology: Arc::new(FlowTopology::new(stocks, flows, processes).unwrap()),
         initial: vec![1_000.0; stock_count],
         requested: vec![0.25; stock_count * 2],
     }

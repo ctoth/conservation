@@ -4,8 +4,11 @@
 //!
 //! [`FlowTopology`] compiles identifiers and endpoints into immutable indices
 //! shared by [`ExactState`] and [`DenseState`]. A batch is evaluated against one
-//! pre-settlement state. When proposed withdrawals exceed a stock, all
-//! withdrawals from that stock receive the same proportional scale. Boundary
+//! pre-settlement state. A stock holds a point of its kind and flows move the
+//! kind's difference. A batch that would take a floored stock below its kind's
+//! floor is refused unless every process withdrawing from it is declared
+//! `Rationing::Ration`; those withdrawals then share the scale
+//! (available − floor) / withdrawal. Floorless stocks are never limited. Boundary
 //! inputs become available only after the batch. These rules make settlement
 //! independent of proposal order (exactly for rational state and under an
 //! explicit tolerance for binary64 state). [`StockFlowSystem`] retains the
@@ -23,7 +26,9 @@ mod compiled;
 mod topology;
 
 pub use compiled::{CompiledSettlementReport, DenseState, DenseTolerance, ExactState};
-pub use topology::{CompiledFlow, FlowSpec, FlowTopology, StockDefinition};
+pub use topology::{
+    CompiledFlow, FlowSpec, FlowTopology, ProcessDefinition, Rationing, StockDefinition,
+};
 
 /// Identifies one stored quantity.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -89,7 +94,7 @@ pub struct StockSpec<K> {
 pub struct ProposedFlow<K> {
     /// Process responsible for the request.
     pub process: ProcessId,
-    /// Conserved kind being moved.
+    /// The kind of the amount moved: the endpoint stocks' `kind.difference()`.
     pub kind: K,
     /// Source stock, or `None` for a boundary input.
     pub source: Option<StockId>,
@@ -115,7 +120,7 @@ pub enum FlowRole {
 pub struct AppliedFlow<K> {
     /// Process responsible for the flow.
     pub process: ProcessId,
-    /// Conserved kind moved by the flow.
+    /// The kind of the amount moved: the endpoint stocks' `kind.difference()`.
     pub kind: K,
     /// Source stock, absent for an input.
     pub source: Option<StockId>,
@@ -159,15 +164,13 @@ pub enum StockFlowError<K> {
     NoStocks,
     /// The same stock identifier was declared twice.
     DuplicateStock(StockId),
-    /// An initial stock or proposed flow amount was negative.
-    NegativeAmount,
     /// A flow has neither source nor target.
     DisconnectedFlow,
     /// A transfer names the same source and target.
     SameStock(StockId),
     /// A flow references an undeclared stock.
     UnknownStock(StockId),
-    /// A flow kind differs from a referenced stock kind.
+    /// A flow kind differs from the difference kind of a referenced stock.
     KindMismatch {
         /// Referenced stock.
         stock: StockId,
@@ -175,6 +178,59 @@ pub enum StockFlowError<K> {
         stock_kind: K,
         /// Kind declared by the flow.
         flow_kind: K,
+    },
+    /// A requested flow amount was negative. Flows are magnitudes moved from source to target.
+    NegativeFlow {
+        /// Position of the flow in the supplied batch.
+        index: usize,
+        /// Process responsible for the flow.
+        process: ProcessId,
+        /// The negative amount requested.
+        amount: Box<BigRational>,
+    },
+    /// A stock's initial coordinate lies below its kind's floor.
+    InitialBelowFloor {
+        /// The stock.
+        stock: StockId,
+        /// The floor of the stock's kind.
+        floor: Box<BigRational>,
+        /// The initial coordinate supplied.
+        amount: Box<BigRational>,
+    },
+    /// A process not declared `Ration` would take a floored stock below its floor.
+    BelowFloor {
+        /// The stock that would be breached.
+        stock: StockId,
+        /// The floor of the stock's kind.
+        floor: Box<BigRational>,
+        /// The least refusing process withdrawing from the stock.
+        process: ProcessId,
+        /// The stock's coordinate before the batch.
+        available: Box<BigRational>,
+        /// The summed withdrawal from the stock in the batch.
+        withdrawal: Box<BigRational>,
+    },
+    /// A transfer joins stocks of different kinds.
+    TransferKinds {
+        /// Source stock.
+        source: StockId,
+        /// Kind declared by the source stock.
+        source_kind: K,
+        /// Target stock.
+        target: StockId,
+        /// Kind declared by the target stock.
+        target_kind: K,
+    },
+    /// A process was declared twice.
+    DuplicateProcess(ProcessId),
+    /// A declared process has no flow in the topology.
+    UnknownProcess(ProcessId),
+    /// A kind's exact floor has no finite binary64 value (dense state only).
+    FloorNotRepresentable {
+        /// The kind whose floor was converted.
+        kind: K,
+        /// The exact floor.
+        floor: Box<BigRational>,
     },
     /// A compiled state's amount vector has the wrong length.
     AmountCount {
@@ -196,9 +252,6 @@ impl<K: Kind> fmt::Display for StockFlowError<K> {
         match self {
             Self::NoStocks => formatter.write_str("a stock-flow system needs at least one stock"),
             Self::DuplicateStock(stock) => write!(formatter, "duplicate stock {stock}"),
-            Self::NegativeAmount => {
-                formatter.write_str("stock and flow amounts must be nonnegative")
-            }
             Self::DisconnectedFlow => formatter.write_str("a flow needs a source or target"),
             Self::SameStock(stock) => write!(formatter, "flow source and target are both {stock}"),
             Self::UnknownStock(stock) => write!(formatter, "unknown stock {stock}"),
@@ -208,7 +261,53 @@ impl<K: Kind> fmt::Display for StockFlowError<K> {
                 flow_kind,
             } => write!(
                 formatter,
-                "stock {stock} contains kind {stock_kind}, not flow kind {flow_kind}"
+                "stock {stock} of kind {stock_kind} moves differences of kind {}, not flow kind {flow_kind}",
+                stock_kind.difference()
+            ),
+            Self::NegativeFlow {
+                index,
+                process,
+                amount,
+            } => write!(
+                formatter,
+                "flow {index} of process {process} requests {amount}; flow amounts are nonnegative magnitudes"
+            ),
+            Self::InitialBelowFloor {
+                stock,
+                floor,
+                amount,
+            } => write!(
+                formatter,
+                "stock {stock} starts at {amount}, below its floor {floor}"
+            ),
+            Self::BelowFloor {
+                stock,
+                floor,
+                process,
+                available,
+                withdrawal,
+            } => write!(
+                formatter,
+                "process {process} withdraws {withdrawal} from stock {stock}, which holds {available}; that would take it below its floor {floor}"
+            ),
+            Self::TransferKinds {
+                source,
+                source_kind,
+                target,
+                target_kind,
+            } => write!(
+                formatter,
+                "transfer from stock {source} of kind {source_kind} to stock {target} of kind {target_kind} crosses balances"
+            ),
+            Self::DuplicateProcess(process) => {
+                write!(formatter, "duplicate process declaration {process}")
+            }
+            Self::UnknownProcess(process) => {
+                write!(formatter, "process {process} is declared but has no flow")
+            }
+            Self::FloorNotRepresentable { kind, floor } => write!(
+                formatter,
+                "floor {floor} of kind {kind} has no finite binary64 value"
             ),
             Self::AmountCount { expected, actual } => write!(
                 formatter,
@@ -227,6 +326,34 @@ impl<K: Kind> fmt::Display for StockFlowError<K> {
 
 impl<K: Kind> Error for StockFlowError<K> {}
 
+/// How much of one source's summed withdrawal settles. Used by both
+/// `StockFlowSystem::settle` and `ExactState::settle`.
+pub(crate) fn source_scale<K: Kind>(
+    stock: &StockId,
+    floor: Option<BigRational>,
+    available: &BigRational,
+    withdrawal: &BigRational,
+    refusing: impl FnOnce() -> Option<ProcessId>,
+) -> Result<BigRational, StockFlowError<K>> {
+    let Some(floor) = floor else {
+        return Ok(BigRational::one());
+    };
+    let headroom = available - &floor;
+    if withdrawal.is_zero() || *withdrawal <= headroom {
+        return Ok(BigRational::one());
+    }
+    match refusing() {
+        Some(process) => Err(StockFlowError::BelowFloor {
+            stock: stock.clone(),
+            floor: Box::new(floor),
+            process,
+            available: Box::new(available.clone()),
+            withdrawal: Box::new(withdrawal.clone()),
+        }),
+        None => Ok(headroom / withdrawal),
+    }
+}
+
 /// A data-oriented stock state with exact boundary accounts and event history.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StockFlowSystem<K> {
@@ -237,15 +364,29 @@ pub struct StockFlowSystem<K> {
     initial: BTreeMap<K, BigRational>,
     inputs: BTreeMap<K, BigRational>,
     outputs: BTreeMap<K, BigRational>,
+    rationing: BTreeMap<ProcessId, Rationing>,
     history: Vec<AppliedFlow<K>>,
 }
 
 impl<K: Kind> StockFlowSystem<K> {
-    /// Constructs a system from typed, nonnegative stock declarations.
-    pub fn new(specs: impl IntoIterator<Item = StockSpec<K>>) -> Result<Self, StockFlowError<K>> {
+    /// Constructs a system from typed stock declarations whose initial
+    /// coordinates respect each kind's floor, and from process declarations.
+    ///
+    /// A process that is not declared is [`Rationing::Refuse`].
+    pub fn new(
+        specs: impl IntoIterator<Item = StockSpec<K>>,
+        processes: impl IntoIterator<Item = ProcessDefinition>,
+    ) -> Result<Self, StockFlowError<K>> {
         let specs: Vec<_> = specs.into_iter().collect();
         if specs.is_empty() {
             return Err(StockFlowError::NoStocks);
+        }
+        let mut rationing = BTreeMap::new();
+        for process in processes {
+            if rationing.contains_key(&process.id) {
+                return Err(StockFlowError::DuplicateProcess(process.id));
+            }
+            rationing.insert(process.id, process.rationing);
         }
 
         let mut seen = BTreeSet::new();
@@ -254,8 +395,14 @@ impl<K: Kind> StockFlowSystem<K> {
         let mut amounts = Vec::with_capacity(specs.len());
         let mut initial = BTreeMap::<K, BigRational>::new();
         for spec in specs {
-            if spec.initial.is_negative() {
-                return Err(StockFlowError::NegativeAmount);
+            if let Some(floor) = spec.kind.floor() {
+                if spec.initial < floor {
+                    return Err(StockFlowError::InitialBelowFloor {
+                        stock: spec.id,
+                        floor: Box::new(floor),
+                        amount: Box::new(spec.initial),
+                    });
+                }
             }
             if !seen.insert(spec.id.clone()) {
                 return Err(StockFlowError::DuplicateStock(spec.id));
@@ -280,6 +427,7 @@ impl<K: Kind> StockFlowSystem<K> {
             initial,
             inputs: BTreeMap::new(),
             outputs: BTreeMap::new(),
+            rationing,
             history: Vec::new(),
         })
     }
@@ -326,18 +474,44 @@ impl<K: Kind> StockFlowSystem<K> {
         &mut self,
         proposals: &[ProposedFlow<K>],
     ) -> Result<SettlementReport<K>, StockFlowError<K>> {
+        /// A flow's resolved endpoints; each role carries exactly its stocks.
+        enum Ends {
+            Input { target: usize },
+            Output { source: usize },
+            Transfer { source: usize, target: usize },
+        }
+
+        impl Ends {
+            fn source(&self) -> Option<usize> {
+                match *self {
+                    Self::Input { .. } => None,
+                    Self::Output { source } | Self::Transfer { source, .. } => Some(source),
+                }
+            }
+
+            fn role(&self) -> FlowRole {
+                match self {
+                    Self::Input { .. } => FlowRole::Input,
+                    Self::Output { .. } => FlowRole::Output,
+                    Self::Transfer { .. } => FlowRole::Transfer,
+                }
+            }
+        }
+
         struct Resolved<'a, K> {
             proposal: &'a ProposedFlow<K>,
-            source: Option<usize>,
-            target: Option<usize>,
-            role: FlowRole,
+            ends: Ends,
         }
 
         let mut resolved = Vec::with_capacity(proposals.len());
         let mut requested = vec![BigRational::zero(); self.amounts.len()];
-        for proposal in proposals {
+        for (index, proposal) in proposals.iter().enumerate() {
             if proposal.amount.is_negative() {
-                return Err(StockFlowError::NegativeAmount);
+                return Err(StockFlowError::NegativeFlow {
+                    index,
+                    process: proposal.process.clone(),
+                    amount: Box::new(proposal.amount.clone()),
+                });
             }
             let source = proposal
                 .source
@@ -349,56 +523,79 @@ impl<K: Kind> StockFlowSystem<K> {
                 .as_ref()
                 .map(|stock| self.resolve(stock, proposal.kind))
                 .transpose()?;
-            let role = match (source, target) {
+            let ends = match (source, target) {
                 (None, None) => return Err(StockFlowError::DisconnectedFlow),
                 (Some(source), Some(target)) if source == target => {
                     return Err(StockFlowError::SameStock(self.stocks[source].clone()));
                 }
-                (None, Some(_)) => FlowRole::Input,
-                (Some(_), None) => FlowRole::Output,
-                (Some(_), Some(_)) => FlowRole::Transfer,
+                (Some(source), Some(target)) if self.kinds[source] != self.kinds[target] => {
+                    return Err(StockFlowError::TransferKinds {
+                        source: self.stocks[source].clone(),
+                        source_kind: self.kinds[source],
+                        target: self.stocks[target].clone(),
+                        target_kind: self.kinds[target],
+                    });
+                }
+                (None, Some(target)) => Ends::Input { target },
+                (Some(source), None) => Ends::Output { source },
+                (Some(source), Some(target)) => Ends::Transfer { source, target },
             };
-            if let Some(source) = source {
+            if let Some(source) = ends.source() {
                 requested[source] += &proposal.amount;
             }
-            resolved.push(Resolved {
-                proposal,
-                source,
-                target,
-                role,
-            });
+            resolved.push(Resolved { proposal, ends });
         }
 
-        let scales: Vec<_> = requested
-            .iter()
-            .zip(&self.amounts)
-            .map(|(requested, available)| {
-                if requested.is_zero() || requested <= available {
-                    BigRational::one()
-                } else {
-                    available / requested
-                }
+        let scales = (0..self.amounts.len())
+            .map(|stock| {
+                source_scale(
+                    &self.stocks[stock],
+                    self.kinds[stock].floor(),
+                    &self.amounts[stock],
+                    &requested[stock],
+                    || {
+                        resolved
+                            .iter()
+                            .filter(|flow| {
+                                flow.ends.source() == Some(stock)
+                                    && flow.proposal.amount.is_positive()
+                                    && self
+                                        .rationing
+                                        .get(&flow.proposal.process)
+                                        .copied()
+                                        .unwrap_or_default()
+                                        == Rationing::Refuse
+                            })
+                            .map(|flow| &flow.proposal.process)
+                            .min()
+                            .cloned()
+                    },
+                )
             })
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
         let mut deltas = vec![BigRational::zero(); self.amounts.len()];
         let mut applied = Vec::with_capacity(resolved.len());
         let mut batch_inputs = BTreeMap::<K, BigRational>::new();
         let mut batch_outputs = BTreeMap::<K, BigRational>::new();
 
         for flow in resolved {
-            let amount = flow.source.map_or_else(
+            let amount = flow.ends.source().map_or_else(
                 || flow.proposal.amount.clone(),
                 |source| &flow.proposal.amount * &scales[source],
             );
-            if let Some(source) = flow.source {
-                deltas[source] -= &amount;
-            } else {
-                *batch_inputs.entry(flow.proposal.kind).or_default() += &amount;
-            }
-            if let Some(target) = flow.target {
-                deltas[target] += &amount;
-            } else {
-                *batch_outputs.entry(flow.proposal.kind).or_default() += &amount;
+            match flow.ends {
+                Ends::Transfer { source, target } => {
+                    deltas[source] -= &amount;
+                    deltas[target] += &amount;
+                }
+                Ends::Input { target } => {
+                    deltas[target] += &amount;
+                    *batch_inputs.entry(self.kinds[target]).or_default() += &amount;
+                }
+                Ends::Output { source } => {
+                    deltas[source] -= &amount;
+                    *batch_outputs.entry(self.kinds[source]).or_default() += &amount;
+                }
             }
             applied.push(AppliedFlow {
                 process: flow.proposal.process.clone(),
@@ -407,13 +604,13 @@ impl<K: Kind> StockFlowSystem<K> {
                 target: flow.proposal.target.clone(),
                 requested: flow.proposal.amount.clone(),
                 applied: amount,
-                role: flow.role,
+                role: flow.ends.role(),
             });
         }
 
-        for (amount, delta) in self.amounts.iter_mut().zip(deltas) {
+        for ((amount, delta), kind) in self.amounts.iter_mut().zip(deltas).zip(&self.kinds) {
             *amount += delta;
-            debug_assert!(!amount.is_negative());
+            debug_assert!(kind.floor().is_none_or(|floor| *amount >= floor));
         }
         for (kind, amount) in batch_inputs {
             *self.inputs.entry(kind).or_default() += amount;
@@ -432,7 +629,7 @@ impl<K: Kind> StockFlowSystem<K> {
             .get(stock)
             .copied()
             .ok_or_else(|| StockFlowError::UnknownStock(stock.clone()))?;
-        if self.kinds[index] != flow_kind {
+        if self.kinds[index].difference() != flow_kind {
             return Err(StockFlowError::KindMismatch {
                 stock: stock.clone(),
                 stock_kind: self.kinds[index],
