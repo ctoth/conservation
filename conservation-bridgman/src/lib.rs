@@ -61,7 +61,10 @@ impl BridgmanKinds {
     pub fn new(registry: &'static Registry) -> Result<Self, BridgmanKindError> {
         for kind in registry.kinds() {
             kind.dimensions()
-                .map_err(|source| BridgmanKindError::Dimensions { kind, source })?;
+                .map_err(|source| BridgmanKindError::Dimensions {
+                    kind,
+                    source: Box::new(source),
+                })?;
             match kind.role() {
                 AffineRole::Point => {
                     difference_of(kind)
@@ -112,9 +115,10 @@ impl KindRegistry for BridgmanKinds {
 
 /// The kind of a difference of two values of `kind`: Bridgman's own subtraction
 /// rule (a point minus itself is its declared difference; any other kind minus
-/// itself is itself). Bridgman exposes no other public reading of it.
-fn difference_of(kind: Declared<'static>) -> Result<Declared<'static>, QuantityError> {
-    kind.combine(Op::Sub, kind)
+/// itself is itself). Bridgman exposes no other public reading of it. Bridgman's
+/// refusal is boxed whole, because `QuantityError` is large.
+fn difference_of(kind: Declared<'static>) -> Result<Declared<'static>, Box<QuantityError>> {
+    kind.combine(Op::Sub, kind).map_err(Box::new)
 }
 
 /// `minimum` as an exact coordinate in `kind`'s canonical unit. The binary64
@@ -124,7 +128,10 @@ fn floor_coordinate(
     kind: Declared<'static>,
     minimum: Quantity<'static>,
 ) -> Result<BigRational, BridgmanKindError> {
-    let floor = |source| BridgmanKindError::Floor { kind, source };
+    let floor = |source| BridgmanKindError::Floor {
+        kind,
+        source: Box::new(source),
+    };
     let unit = kind.canonical_unit().map_err(floor)?;
     let read = minimum.in_unit(unit).map_err(floor)?;
     let round_trip = Quantity::new(read, unit, kind).map_err(floor)?;
@@ -271,23 +278,24 @@ impl DimensionAlgebra for BridgmanKind {
 }
 
 /// Why a Bridgman kind cannot be a conservation kind. Each variant keeps the
-/// Bridgman kind and Bridgman's own refusal.
+/// Bridgman kind and Bridgman's own refusal, whole; the refusal is boxed because
+/// `QuantityError` is large.
 #[derive(Clone, Debug, PartialEq)]
 pub enum BridgmanKindError {
     /// The kind's dimensions are unresolved.
     Dimensions {
         kind: Declared<'static>,
-        source: QuantityError,
+        source: Box<QuantityError>,
     },
     /// A point kind whose difference kind Bridgman does not give.
     Difference {
         kind: Declared<'static>,
-        source: QuantityError,
+        source: Box<QuantityError>,
     },
     /// The declared floor cannot be read in the canonical unit.
     Floor {
         kind: Declared<'static>,
-        source: QuantityError,
+        source: Box<QuantityError>,
     },
     /// The floor read in the canonical unit (`read`) is not the declared floor.
     FloorNotExact { kind: Declared<'static>, read: f64 },
@@ -327,7 +335,7 @@ impl Error for BridgmanKindError {
         match self {
             Self::Dimensions { source, .. }
             | Self::Difference { source, .. }
-            | Self::Floor { source, .. } => Some(source),
+            | Self::Floor { source, .. } => Some(source.as_ref()),
             Self::FloorNotExact { .. } | Self::ForeignRegistry { .. } => None,
         }
     }

@@ -259,13 +259,17 @@ fn typed_kinds_cross_only_their_own_registry() {
 fn unresolved_dimensions_are_refused_at_admission() {
     let registry = Registry::from_yaml("schema: 4\nkinds:\n  - {id: vague}\nunits: []\n");
     assert!(registry.is_ok());
+    let error = BridgmanKinds::leak(registry.unwrap()).err().unwrap();
+    let unresolved = QuantityError::UnresolvedDimensions("vague".into());
     assert!(matches!(
-        BridgmanKinds::leak(registry.unwrap()),
-        Err(BridgmanKindError::Dimensions {
-            kind,
-            source: QuantityError::UnresolvedDimensions(id),
-        }) if kind.id() == "vague" && id == "vague"
+        &error,
+        BridgmanKindError::Dimensions { kind, source }
+            if kind.id() == "vague" && **source == unresolved
     ));
+    assert_eq!(
+        std::error::Error::source(&error).and_then(|source| source.downcast_ref::<QuantityError>()),
+        Some(&unresolved)
+    );
 }
 
 #[test]
