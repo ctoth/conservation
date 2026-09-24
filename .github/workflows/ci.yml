@@ -46,6 +46,16 @@ jobs:
       - name: Rust compatibility and contracts
         run: |
           uv run --no-sync cargo test --workspace --locked
+      - name: Bridgman stays in conservation-bridgman
+        run: |
+          for crate in conservation-core conservation-dynamics conservation-exchange \
+              conservation-linear conservation-python conservation-stock-flow \
+              conservation-test-kinds conservation-trace; do
+            if uv run --no-sync cargo tree -p "$crate" --locked -e normal,build,dev | grep -q bridgman; then
+              echo "$crate depends on Bridgman"
+              exit 1
+            fi
+          done
       # MSRV proves build/runtime compatibility. Stable owns the lint policy;
       # historical Clippy versions diagnose unchanged code differently.
       - name: Rust formatting and lint

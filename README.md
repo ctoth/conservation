@@ -31,6 +31,9 @@ This Cargo workspace contains the following library crates:
 - `conservation-exchange` owns exact coupled transformations, floors from the kind,
   capacities, immutable participant records and atomic prepare/publish. It does
   not proportionally limit individual legs. See its [contract and Python API](conservation-exchange/README.md).
+- `conservation-bridgman` implements the kind and dimension-algebra traits for
+  Bridgman kinds. It holds no kind data; kinds, dimensions, grades and floors are
+  read from a Bridgman registry pinned by Git revision.
 
 `conservation-python` provides the direct PyO3 binding for `conservation-exchange`.
 Run `uv sync --locked` before the Python tests or binding-aware Cargo commands;
@@ -39,7 +42,8 @@ see the exchange documentation for the full verification commands.
 ## Boundary
 
 The core, dynamics, linear, and trace foundation is deliberately independent
-of any institution model and of Bridgman. The optional Python binding does not
+of any institution model and of Bridgman; only `conservation-bridgman` depends on
+Bridgman. The optional Python binding does not
 introduce BLAS integration, domain-specific ecosystem equations or Noether derivation.
 `Provenance::Noether` is a tag reserved for laws produced elsewhere.
 

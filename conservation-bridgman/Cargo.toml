@@ -1,0 +1,20 @@
+[package]
+name = "conservation-bridgman"
+description = "Bridgman kinds as conservation kinds"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+bridgman-core = { git = "https://github.com/ctoth/bridgman.git", rev = "ddbedade47fda8fab1280b03d9a8d108ff8dd2f6" }
+conservation-core = { path = "../conservation-core" }
+num-rational.workspace = true
+
+[dev-dependencies]
+conservation-dynamics = { path = "../conservation-dynamics" }
+conservation-exchange = { path = "../conservation-exchange" }
+num-bigint.workspace = true
