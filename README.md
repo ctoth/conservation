@@ -26,7 +26,7 @@ This Cargo workspace contains the following library crates:
   errors. Trace witnesses do not inherit derivation-origin metadata.
 - `conservation-stock-flow` compiles exact stock-flow carriers and checks
   transition and boundary evidence without reimplementing settlement.
-- `conservation-exchange` owns exact coupled transformations, signed coordinates,
+- `conservation-exchange` owns exact coupled transformations, floors from the kind,
   capacities, immutable participant records and atomic prepare/publish. It does
   not proportionally limit individual legs. See its [contract and Python API](conservation-exchange/README.md).
 

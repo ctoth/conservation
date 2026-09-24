@@ -1,13 +1,20 @@
 //! Direct bindings: all state, validation and publication live in conservation-exchange.
+use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet};
+use std::hash::{Hash, Hasher};
 use std::str::FromStr;
 
+use conservation_core::Kind as _;
 use conservation_exchange as core;
 use num_rational::BigRational;
 use pyo3::create_exception;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
+
+mod kinds;
+
+use kinds::{Declaration, DeclarationError, NativeKind, NativeRegistry, NativeTable};
 
 create_exception!(_native, ExchangeError, PyValueError);
 create_exception!(_native, InvalidExchange, ExchangeError);
@@ -20,13 +27,20 @@ create_exception!(_native, DuplicateExchangeError, ExchangeError);
 create_exception!(_native, StalePreparationError, ExchangeError);
 create_exception!(_native, ForeignPreparationError, ExchangeError);
 create_exception!(_native, SnapshotError, ExchangeError);
+create_exception!(_native, KindError, ExchangeError);
+create_exception!(_native, UnknownKindError, KindError);
+create_exception!(_native, KindDeclarationError, KindError);
 
-fn failure(error: core::Error) -> PyErr {
+fn failure(error: core::Error<NativeKind>) -> PyErr {
     let message = error.to_string();
     match error {
         core::Error::Invalid(_) => InvalidExchange::new_err(message),
-        core::Error::Dimension { .. } => DimensionError::new_err(message),
-        core::Error::Domain { .. } => DomainError::new_err(message),
+        core::Error::Kinds { .. } => DimensionError::new_err(message),
+        core::Error::Dimensions { .. } => DimensionError::new_err(message),
+        core::Error::Algebra(_) => DimensionError::new_err(message),
+        core::Error::BelowFloor { .. } => DomainError::new_err(message),
+        core::Error::UnknownKind { .. } => UnknownKindError::new_err(message),
+        core::Error::UnsupportedSnapshot { .. } => SnapshotError::new_err(message),
         core::Error::Capacity { .. } => CapacityError::new_err(message),
         core::Error::Constraint { .. } => ConstraintError::new_err(message),
         core::Error::Participant { .. } => ParticipationError::new_err(message),
@@ -37,61 +51,137 @@ fn failure(error: core::Error) -> PyErr {
     }
 }
 
+fn declaration_failure(error: DeclarationError) -> PyErr {
+    KindDeclarationError::new_err(error.to_string())
+}
+
 fn rational(value: &str) -> PyResult<BigRational> {
     BigRational::from_str(value).map_err(|_| {
         InvalidExchange::new_err("expected an exact integer or numerator/denominator string")
     })
 }
 
-#[pyclass(name = "Dimension", module = "conservation_exchange._native", frozen)]
-struct Dimension {
-    inner: core::Dimension,
+/// How one kind is declared: its dimensions, an optional floor and, for a point
+/// kind, the kind of its differences.
+#[pyclass(
+    name = "KindDeclaration",
+    module = "conservation_exchange._native",
+    frozen
+)]
+struct KindDeclaration {
+    dimensions: BTreeMap<String, i32>,
+    floor: Option<String>,
+    difference: Option<String>,
 }
 #[pymethods]
-impl Dimension {
+impl KindDeclaration {
     #[new]
-    #[pyo3(signature = (name=None))]
-    fn new(name: Option<&str>) -> PyResult<Self> {
+    #[pyo3(signature = (dimensions=None, *, floor=None, difference=None))]
+    fn new(
+        dimensions: Option<BTreeMap<String, i32>>,
+        floor: Option<String>,
+        difference: Option<String>,
+    ) -> Self {
+        Self {
+            dimensions: dimensions.unwrap_or_default(),
+            floor,
+            difference,
+        }
+    }
+}
+
+/// Resolves kind names. A registry is validated once and lives until the
+/// process exits.
+#[pyclass(
+    name = "KindRegistry",
+    module = "conservation_exchange._native",
+    frozen
+)]
+struct KindRegistry {
+    inner: NativeRegistry,
+}
+#[pymethods]
+impl KindRegistry {
+    #[new]
+    fn new(py: Python<'_>, declarations: BTreeMap<String, Py<KindDeclaration>>) -> PyResult<Self> {
+        let declarations = declarations
+            .into_iter()
+            .map(|(name, declaration)| {
+                let declaration = declaration.borrow(py);
+                (
+                    name,
+                    Declaration {
+                        dimensions: declaration.dimensions.clone(),
+                        floor: declaration.floor.clone(),
+                        difference: declaration.difference.clone(),
+                    },
+                )
+            })
+            .collect();
+        let table = NativeTable::leak(declarations, |value| rational(value).ok())
+            .map_err(declaration_failure)?;
         Ok(Self {
-            inner: match name {
-                Some(name) => core::Dimension::base(name).map_err(failure)?,
-                None => core::Dimension::dimensionless(),
-            },
+            inner: NativeRegistry::new(table),
         })
     }
-    fn product(&self, other: &Self) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.product(&other.inner).map_err(failure)?,
-        })
+    fn kind(&self, name: &str) -> PyResult<Kind> {
+        use conservation_core::KindRegistry as _;
+        self.inner
+            .resolve(name)
+            .map(|inner| Kind { inner })
+            .ok_or_else(|| UnknownKindError::new_err(format!("unknown kind {name:?}")))
     }
-    fn quotient(&self, other: &Self) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.quotient(&other.inner).map_err(failure)?,
-        })
+}
+
+/// One kind of one registry.
+#[pyclass(name = "Kind", module = "conservation_exchange._native", frozen)]
+struct Kind {
+    inner: NativeKind,
+}
+#[pymethods]
+impl Kind {
+    #[getter]
+    fn name(&self) -> &'static str {
+        self.inner.name()
     }
     #[getter]
-    fn powers(&self) -> BTreeMap<String, i32> {
-        self.inner.powers().clone()
+    fn dimensions(&self) -> BTreeMap<String, i32> {
+        self.inner.powers()
+    }
+    #[getter]
+    fn floor(&self) -> Option<String> {
+        self.inner.floor().map(|floor| floor.to_string())
+    }
+    #[getter]
+    fn difference(&self) -> Option<Kind> {
+        match self.inner.affine() {
+            conservation_core::Affine::Point { difference } => Some(Kind { inner: difference }),
+            conservation_core::Affine::Linear => None,
+        }
     }
     fn __eq__(&self, other: &Self) -> bool {
         self.inner == other.inner
+    }
+    fn __hash__(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.inner.hash(&mut hasher);
+        hasher.finish()
+    }
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.inner)
     }
 }
 
 #[pyclass(name = "Quantity", module = "conservation_exchange._native", frozen)]
 struct Quantity {
-    inner: core::Quantity,
+    inner: core::Quantity<NativeKind>,
 }
 #[pymethods]
 impl Quantity {
     #[new]
-    #[pyo3(signature = (value, dimension=None))]
-    fn new(value: &str, dimension: Option<&Dimension>) -> PyResult<Self> {
+    fn new(value: &str, kind: &Kind) -> PyResult<Self> {
         Ok(Self {
-            inner: core::Quantity::new(
-                rational(value)?,
-                dimension.map(|d| d.inner.clone()).unwrap_or_default(),
-            ),
+            inner: core::Quantity::new(rational(value)?, kind.inner),
         })
     }
     #[getter]
@@ -99,9 +189,9 @@ impl Quantity {
         self.inner.amount.to_string()
     }
     #[getter]
-    fn dimension(&self) -> Dimension {
-        Dimension {
-            inner: self.inner.dimension.clone(),
+    fn kind(&self) -> Kind {
+        Kind {
+            inner: self.inner.kind,
         }
     }
     fn __eq__(&self, other: &Self) -> bool {
@@ -111,7 +201,7 @@ impl Quantity {
 
 #[pyclass(name = "Expr", module = "conservation_exchange._native", frozen)]
 struct Expr {
-    inner: core::Expr,
+    inner: core::Expr<NativeKind>,
 }
 #[pymethods]
 impl Expr {
@@ -171,7 +261,7 @@ impl Expr {
 
 #[pyclass(name = "Constraint", module = "conservation_exchange._native", frozen)]
 struct Constraint {
-    inner: core::Constraint,
+    inner: core::Constraint<NativeKind>,
 }
 #[pymethods]
 impl Constraint {
@@ -197,16 +287,16 @@ impl Constraint {
 
 #[pyclass(name = "Fact", module = "conservation_exchange._native", frozen)]
 struct Fact {
-    inner: core::Fact,
+    inner: core::Fact<NativeKind>,
 }
 #[pymethods]
 impl Fact {
     #[new]
-    fn new(owner: &str, dimension: &Dimension) -> Self {
+    fn new(owner: &str, kind: &Kind) -> Self {
         Self {
             inner: core::Fact {
                 owner: owner.into(),
-                dimension: dimension.inner.clone(),
+                kind: kind.inner,
             },
         }
     }
@@ -214,7 +304,7 @@ impl Fact {
 
 #[pyclass(name = "Capacity", module = "conservation_exchange._native", frozen)]
 struct Capacity {
-    inner: core::Capacity,
+    inner: core::Capacity<NativeKind>,
 }
 #[pymethods]
 impl Capacity {
@@ -231,7 +321,7 @@ impl Capacity {
 fn quantities(
     py: Python<'_>,
     values: Option<BTreeMap<String, Py<Quantity>>>,
-) -> BTreeMap<String, core::Quantity> {
+) -> BTreeMap<String, core::Quantity<NativeKind>> {
     values
         .unwrap_or_default()
         .into_iter()
@@ -239,32 +329,37 @@ fn quantities(
         .collect()
 }
 
+fn kinds(
+    py: Python<'_>,
+    values: Option<BTreeMap<String, Py<Kind>>>,
+) -> BTreeMap<String, NativeKind> {
+    values
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(id, kind)| (id, kind.borrow(py).inner))
+        .collect()
+}
+
 #[pyclass(name = "Stock", module = "conservation_exchange._native", frozen)]
 struct Stock {
-    inner: core::Stock,
+    inner: core::Stock<NativeKind>,
 }
 #[pymethods]
 impl Stock {
     #[new]
-    #[pyo3(signature = (id, owner, dimension, *, signed=false, capacities=None))]
+    #[pyo3(signature = (id, owner, kind, *, capacities=None))]
     fn new(
         py: Python<'_>,
         id: &str,
         owner: &str,
-        dimension: &Dimension,
-        signed: bool,
+        kind: &Kind,
         capacities: Option<BTreeMap<String, Py<Quantity>>>,
     ) -> Self {
         Self {
             inner: core::Stock {
                 id: id.into(),
                 owner: owner.into(),
-                dimension: dimension.inner.clone(),
-                domain: if signed {
-                    core::Domain::Signed
-                } else {
-                    core::Domain::Nonnegative
-                },
+                kind: kind.inner,
                 capacities: quantities(py, capacities),
             },
         }
@@ -278,20 +373,16 @@ impl Stock {
         &self.inner.owner
     }
     #[getter]
-    fn dimension(&self) -> Dimension {
-        Dimension {
-            inner: self.inner.dimension.clone(),
+    fn kind(&self) -> Kind {
+        Kind {
+            inner: self.inner.kind,
         }
-    }
-    #[getter]
-    fn signed(&self) -> bool {
-        self.inner.domain == core::Domain::Signed
     }
 }
 
 #[pyclass(name = "Placement", module = "conservation_exchange._native", frozen)]
 struct Placement {
-    inner: core::Placement,
+    inner: core::Placement<NativeKind>,
 }
 #[pymethods]
 impl Placement {
@@ -313,7 +404,7 @@ impl Placement {
 
 #[pyclass(name = "Law", module = "conservation_exchange._native", frozen)]
 struct Law {
-    inner: core::Law,
+    inner: core::Law<NativeKind>,
 }
 #[pymethods]
 impl Law {
@@ -322,24 +413,17 @@ impl Law {
     fn new(
         py: Python<'_>,
         id: &str,
-        slots: BTreeMap<String, Py<Dimension>>,
+        slots: BTreeMap<String, Py<Kind>>,
         constraints: Vec<Py<Constraint>>,
-        boundaries: Option<BTreeMap<String, Py<Dimension>>>,
+        boundaries: Option<BTreeMap<String, Py<Kind>>>,
         facts: Option<BTreeMap<String, Py<Fact>>>,
         participants: Option<BTreeSet<String>>,
     ) -> Self {
         Self {
             inner: core::Law {
                 id: id.into(),
-                slots: slots
-                    .into_iter()
-                    .map(|(id, d)| (id, d.borrow(py).inner.clone()))
-                    .collect(),
-                boundaries: boundaries
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|(id, d)| (id, d.borrow(py).inner.clone()))
-                    .collect(),
+                slots: kinds(py, Some(slots)),
+                boundaries: kinds(py, boundaries),
                 facts: facts
                     .unwrap_or_default()
                     .into_iter()
@@ -357,7 +441,7 @@ impl Law {
 
 #[pyclass(name = "Model", module = "conservation_exchange._native", frozen)]
 struct Model {
-    inner: core::Model,
+    inner: core::Model<NativeKind>,
 }
 #[pymethods]
 impl Model {
@@ -388,7 +472,7 @@ impl Model {
 
 #[pyclass(name = "Exchange", module = "conservation_exchange._native", frozen)]
 struct Exchange {
-    inner: core::Exchange,
+    inner: core::Exchange<NativeKind>,
 }
 #[pymethods]
 impl Exchange {
@@ -458,15 +542,15 @@ impl RecordWrite {
     frozen
 )]
 struct Participation {
-    inner: core::Participation,
+    inner: core::Participation<NativeKind>,
 }
 #[pyclass(name = "Prepared", module = "conservation_exchange._native", frozen)]
 struct Prepared {
-    inner: core::Prepared,
+    inner: core::Prepared<NativeKind>,
 }
 #[pyclass(name = "Receipt", module = "conservation_exchange._native", frozen)]
 struct Receipt {
-    inner: core::Receipt,
+    inner: core::Receipt<NativeKind>,
 }
 #[pymethods]
 impl Receipt {
@@ -510,7 +594,7 @@ impl Receipt {
 
 #[pyclass(name = "Engine", module = "conservation_exchange._native")]
 struct Engine {
-    inner: core::Engine,
+    inner: core::Engine<NativeKind>,
 }
 #[pymethods]
 impl Engine {
@@ -543,7 +627,7 @@ impl Engine {
         Ok(Quantity {
             inner: core::Quantity::new(
                 self.inner.amount(stock).map_err(failure)?.clone(),
-                self.inner.stock(stock).map_err(failure)?.dimension.clone(),
+                self.inner.stock(stock).map_err(failure)?.kind,
             ),
         })
     }
@@ -621,9 +705,9 @@ impl Engine {
         Ok(PyBytes::new(py, &self.inner.snapshot().map_err(failure)?).unbind())
     }
     #[staticmethod]
-    fn restore(bytes: &Bound<'_, PyBytes>) -> PyResult<Self> {
+    fn restore(bytes: &Bound<'_, PyBytes>, registry: &KindRegistry) -> PyResult<Self> {
         Ok(Self {
-            inner: core::Engine::restore(bytes.as_bytes()).map_err(failure)?,
+            inner: core::Engine::restore(bytes.as_bytes(), &registry.inner).map_err(failure)?,
         })
     }
 }
@@ -631,7 +715,9 @@ impl Engine {
 #[pymodule]
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("__version__", env!("CARGO_PKG_VERSION"))?;
-    module.add_class::<Dimension>()?;
+    module.add_class::<KindDeclaration>()?;
+    module.add_class::<KindRegistry>()?;
+    module.add_class::<Kind>()?;
     module.add_class::<Quantity>()?;
     module.add_class::<Expr>()?;
     module.add_class::<Constraint>()?;
@@ -668,5 +754,11 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
         py.get_type::<ForeignPreparationError>(),
     )?;
     module.add("SnapshotError", py.get_type::<SnapshotError>())?;
+    module.add("KindError", py.get_type::<KindError>())?;
+    module.add("UnknownKindError", py.get_type::<UnknownKindError>())?;
+    module.add(
+        "KindDeclarationError",
+        py.get_type::<KindDeclarationError>(),
+    )?;
     Ok(())
 }

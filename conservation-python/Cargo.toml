@@ -15,6 +15,7 @@ crate-type = ["cdylib", "rlib"]
 extension-module = ["pyo3/extension-module"]
 
 [dependencies]
+conservation-core = { path = "../conservation-core" }
 conservation-exchange = { path = "../conservation-exchange" }
 num-rational.workspace = true
 num-traits.workspace = true

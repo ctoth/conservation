@@ -1,36 +1,86 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use conservation_core::DimensionAlgebra;
 use num_rational::BigRational;
 use num_traits::{One, Signed, Zero};
 use serde::{Deserialize, Serialize};
 
-use crate::model::{invalid, rational};
-use crate::{Dimension, Error, Law, Quantity};
+use crate::model::{DimensionContext, KindContext, invalid, rational};
+use crate::{Error, Law, Quantity};
 
-/// Closed, dimension-checked expression language. Unsupported forms fail decoding.
+/// Closed, kind-checked expression language. Unsupported forms fail decoding.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub enum Expr {
-    Constant(Quantity),
+pub enum Expr<K> {
+    Constant(Quantity<K>),
     Before(String),
     After(String),
     Delta(String),
     Boundary(String),
     Fact(String),
-    Sum(Vec<Expr>),
-    Product(Box<Expr>, Box<Expr>),
-    Quotient(Box<Expr>, Box<Expr>),
+    Sum(Vec<Expr<K>>),
+    Product(Box<Expr<K>>, Box<Expr<K>>),
+    Quotient(Box<Expr<K>>, Box<Expr<K>>),
 }
 
-pub(crate) struct Evaluation<'a> {
-    pub before: &'a BTreeMap<String, Quantity>,
-    pub after: &'a BTreeMap<String, Quantity>,
-    pub deltas: &'a BTreeMap<String, Quantity>,
-    pub boundaries: &'a BTreeMap<String, Quantity>,
-    pub facts: &'a BTreeMap<String, Quantity>,
+/// The type of an exchange expression: a declared kind, or dimensions computed by
+/// a product or quotient (which has no kind of its own).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum ExprType<K: DimensionAlgebra> {
+    Kind(K),
+    Derived(K::Dimensions),
 }
 
-impl Expr {
-    pub fn constant(value: Quantity) -> Self {
+impl<K: DimensionAlgebra> ExprType<K> {
+    fn dimensions(&self) -> K::Dimensions {
+        match self {
+            Self::Kind(kind) => kind.dimensions(),
+            Self::Derived(dimensions) => dimensions.clone(),
+        }
+    }
+
+    /// Two kinds compare by identity. A derived side has no kind, so any
+    /// comparison with one compares dimensions.
+    fn require_equal(
+        &self,
+        other: &Self,
+        kind_context: impl FnOnce() -> KindContext,
+        dimension_context: impl FnOnce() -> DimensionContext,
+    ) -> Result<(), Error<K>> {
+        match (self, other) {
+            (Self::Kind(expected), Self::Kind(found)) => {
+                if expected != found {
+                    return Err(Error::Kinds {
+                        context: kind_context(),
+                        expected: *expected,
+                        found: *found,
+                    });
+                }
+            }
+            _ => {
+                let (left, right) = (self.dimensions(), other.dimensions());
+                if left != right {
+                    return Err(Error::Dimensions {
+                        context: dimension_context(),
+                        left,
+                        right,
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+pub(crate) struct Evaluation<'a, K> {
+    pub before: &'a BTreeMap<String, Quantity<K>>,
+    pub after: &'a BTreeMap<String, Quantity<K>>,
+    pub deltas: &'a BTreeMap<String, Quantity<K>>,
+    pub boundaries: &'a BTreeMap<String, Quantity<K>>,
+    pub facts: &'a BTreeMap<String, Quantity<K>>,
+}
+
+impl<K: DimensionAlgebra> Expr<K> {
+    pub fn constant(value: Quantity<K>) -> Self {
         Self::Constant(value)
     }
     pub fn before(slot: impl Into<String>) -> Self {
@@ -58,55 +108,70 @@ impl Expr {
         Self::Quotient(Box::new(self), Box::new(other))
     }
 
-    fn dimension(&self, law: &Law, depth: usize) -> Result<Dimension, Error> {
+    /// Types the expression: leaves have declared kinds (a delta has its slot
+    /// kind's difference), and products and quotients derive dimensions.
+    fn dimensions(&self, law: &Law<K>, depth: usize) -> Result<ExprType<K>, Error<K>> {
         if depth > 64 {
             return Err(invalid("constraint expression nesting exceeds 64"));
         }
+        let slot = |id: &String| {
+            law.slots
+                .get(id)
+                .copied()
+                .ok_or_else(|| invalid(format!("undeclared slot {id}")))
+        };
         match self {
             Self::Constant(q) => {
                 q.validate()?;
-                Ok(q.dimension.clone())
+                Ok(ExprType::Kind(q.kind))
             }
-            Self::Before(id) | Self::After(id) | Self::Delta(id) => law
-                .slots
-                .get(id)
-                .cloned()
-                .ok_or_else(|| invalid(format!("undeclared slot {id}"))),
+            Self::Before(id) | Self::After(id) => slot(id).map(ExprType::Kind),
+            Self::Delta(id) => slot(id).map(|kind| ExprType::Kind(kind.difference())),
             Self::Boundary(id) => law
                 .boundaries
                 .get(id)
-                .cloned()
+                .copied()
+                .map(ExprType::Kind)
                 .ok_or_else(|| invalid(format!("undeclared boundary {id}"))),
             Self::Fact(id) => law
                 .facts
                 .get(id)
-                .map(|fact| fact.dimension.clone())
+                .map(|fact| ExprType::Kind(fact.kind))
                 .ok_or_else(|| invalid(format!("undeclared fact {id}"))),
             Self::Sum(terms) => {
                 let first = terms
                     .first()
                     .ok_or_else(|| invalid("empty expression sum"))?
-                    .dimension(law, depth + 1)?;
+                    .dimensions(law, depth + 1)?;
+                let mut every_kind = matches!(first, ExprType::Kind(_));
                 for term in &terms[1..] {
-                    if term.dimension(law, depth + 1)? != first {
-                        return Err(Error::Dimension {
-                            context: "expression sum".into(),
-                        });
-                    }
+                    let term = term.dimensions(law, depth + 1)?;
+                    first.require_equal(&term, || KindContext::Sum, || DimensionContext::Sum)?;
+                    every_kind &= matches!(term, ExprType::Kind(_));
                 }
-                Ok(first)
+                Ok(if every_kind {
+                    first
+                } else {
+                    ExprType::Derived(first.dimensions())
+                })
             }
-            Self::Product(a, b) => a
-                .dimension(law, depth + 1)?
-                .product(&b.dimension(law, depth + 1)?),
-            Self::Quotient(a, b) => a
-                .dimension(law, depth + 1)?
-                .quotient(&b.dimension(law, depth + 1)?),
+            Self::Product(a, b) => K::product(
+                &a.dimensions(law, depth + 1)?.dimensions(),
+                &b.dimensions(law, depth + 1)?.dimensions(),
+            )
+            .map(ExprType::Derived)
+            .map_err(Error::Algebra),
+            Self::Quotient(a, b) => K::quotient(
+                &a.dimensions(law, depth + 1)?.dimensions(),
+                &b.dimensions(law, depth + 1)?.dimensions(),
+            )
+            .map(ExprType::Derived)
+            .map_err(Error::Algebra),
         }
     }
 
-    fn evaluate(&self, input: &Evaluation<'_>) -> Result<BigRational, Error> {
-        let get = |values: &BTreeMap<String, Quantity>, id: &str| {
+    fn evaluate(&self, input: &Evaluation<'_, K>) -> Result<BigRational, Error<K>> {
+        let get = |values: &BTreeMap<String, Quantity<K>>, id: &str| {
             values
                 .get(id)
                 .map(|q| q.amount.clone())
@@ -163,18 +228,18 @@ pub enum Relation {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Constraint {
+pub struct Constraint<K> {
     pub id: String,
-    pub left: Expr,
-    pub right: Expr,
+    pub left: Expr<K>,
+    pub right: Expr<K>,
     pub relation: Relation,
     /// Absolute tolerance in the dimension of the expression; exact by default.
     pub absolute: BigRational,
     pub relative: BigRational,
 }
 
-impl Constraint {
-    pub fn equal(id: impl Into<String>, left: Expr, right: Expr) -> Self {
+impl<K: DimensionAlgebra> Constraint<K> {
+    pub fn equal(id: impl Into<String>, left: Expr<K>, right: Expr<K>) -> Self {
         Self {
             id: id.into(),
             left,
@@ -185,12 +250,18 @@ impl Constraint {
         }
     }
 
-    pub(crate) fn validate(&self, law: &Law) -> Result<(), Error> {
-        if self.left.dimension(law, 0)? != self.right.dimension(law, 0)? {
-            return Err(Error::Dimension {
-                context: self.id.clone(),
-            });
-        }
+    pub(crate) fn validate(&self, law: &Law<K>) -> Result<(), Error<K>> {
+        let left = self.left.dimensions(law, 0)?;
+        let right = self.right.dimensions(law, 0)?;
+        left.require_equal(
+            &right,
+            || KindContext::Constraint {
+                id: self.id.clone(),
+            },
+            || DimensionContext::Constraint {
+                id: self.id.clone(),
+            },
+        )?;
         rational(&self.absolute)?;
         rational(&self.relative)?;
         if self.absolute.is_negative()
@@ -211,7 +282,7 @@ impl Constraint {
         }
     }
 
-    pub(crate) fn check(&self, exchange: &str, input: &Evaluation<'_>) -> Result<(), Error> {
+    pub(crate) fn check(&self, exchange: &str, input: &Evaluation<'_, K>) -> Result<(), Error<K>> {
         let left = self.left.evaluate(input)?;
         let right = self.right.evaluate(input)?;
         let tolerance = &self.absolute + &self.relative * left.abs().max(right.abs());

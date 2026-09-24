@@ -2,164 +2,107 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
 
-use conservation_core::nonblank;
+use conservation_core::{DimensionAlgebra, nonblank};
 use num_rational::BigRational;
 use num_traits::{Signed, Zero};
 use serde::{Deserialize, Serialize};
 
 use crate::Constraint;
 
-/// Dimensional exponents. Names identify base dimensions, not display units.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct Dimension(BTreeMap<String, i32>);
-
-impl Dimension {
-    pub fn base(name: impl Into<String>) -> Result<Self, Error> {
-        let name = name.into();
-        identifier(&name)?;
-        Ok(Self(BTreeMap::from([(name, 1)])))
-    }
-
-    pub fn dimensionless() -> Self {
-        Self::default()
-    }
-
-    pub fn powers(&self) -> &BTreeMap<String, i32> {
-        &self.0
-    }
-
-    pub fn product(&self, other: &Self) -> Result<Self, Error> {
-        self.combine(other, 1)
-    }
-
-    pub fn quotient(&self, other: &Self) -> Result<Self, Error> {
-        self.combine(other, -1)
-    }
-
-    fn combine(&self, other: &Self, sign: i32) -> Result<Self, Error> {
-        self.validate()?;
-        other.validate()?;
-        let mut result = self.0.clone();
-        for (key, power) in &other.0 {
-            let delta = power
-                .checked_mul(sign)
-                .ok_or_else(|| invalid("dimension exponent overflow"))?;
-            let sum = result
-                .get(key)
-                .copied()
-                .unwrap_or_default()
-                .checked_add(delta)
-                .ok_or_else(|| invalid("dimension exponent overflow"))?;
-            if sum == 0 {
-                result.remove(key);
-            } else {
-                result.insert(key.clone(), sum);
-            }
-        }
-        Ok(Self(result))
-    }
-
-    pub(crate) fn validate(&self) -> Result<(), Error> {
-        for (name, power) in &self.0 {
-            identifier(name)?;
-            if *power == 0 {
-                return Err(invalid("zero dimension exponents are not canonical"));
-            }
-        }
-        Ok(())
-    }
-}
-
 /// An exact rational in canonical base units. Binary floats are never implicit inputs.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Quantity {
+pub struct Quantity<K> {
     pub amount: BigRational,
-    pub dimension: Dimension,
+    pub kind: K,
 }
 
-impl Quantity {
-    pub fn new(amount: BigRational, dimension: Dimension) -> Self {
-        Self { amount, dimension }
+impl<K: DimensionAlgebra> Quantity<K> {
+    pub fn new(amount: BigRational, kind: K) -> Self {
+        Self { amount, kind }
     }
 
-    pub(crate) fn validate(&self) -> Result<(), Error> {
-        self.dimension.validate()?;
+    pub(crate) fn validate(&self) -> Result<(), Error<K>> {
         rational(&self.amount)
     }
 
-    pub(crate) fn same_dimension(&self, dimension: &Dimension, context: &str) -> Result<(), Error> {
+    /// Requires this value to have exactly the `expected` kind.
+    pub(crate) fn same_kind(&self, expected: K, context: KindContext) -> Result<(), Error<K>> {
         self.validate()?;
-        if &self.dimension != dimension {
-            return Err(Error::Dimension {
-                context: context.into(),
+        if self.kind != expected {
+            return Err(Error::Kinds {
+                context,
+                expected,
+                found: self.kind,
             });
         }
         Ok(())
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub enum Domain {
-    Nonnegative,
-    Signed,
-}
-
 /// A stock's physical placement. Capacity weights map stock units to constraint units.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Placement {
+pub struct Placement<K> {
     pub owner: String,
-    pub capacities: BTreeMap<String, Quantity>,
+    pub capacities: BTreeMap<String, Quantity<K>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Stock {
+pub struct Stock<K> {
     pub id: String,
     pub owner: String,
-    pub dimension: Dimension,
-    pub domain: Domain,
-    pub capacities: BTreeMap<String, Quantity>,
+    pub kind: K,
+    pub capacities: BTreeMap<String, Quantity<K>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Capacity {
-    pub maximum: Quantity,
+pub struct Capacity<K> {
+    pub maximum: Quantity<K>,
 }
 
 /// A named domain evaluation. The declared owner supplies it for this proposal/revision.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Fact {
+pub struct Fact<K> {
     pub owner: String,
-    pub dimension: Dimension,
+    pub kind: K,
 }
 
 /// Registered transition law over named stock roles, signed boundary inputs, and facts.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Law {
+pub struct Law<K> {
     pub id: String,
-    pub slots: BTreeMap<String, Dimension>,
-    pub boundaries: BTreeMap<String, Dimension>,
-    pub facts: BTreeMap<String, Fact>,
+    pub slots: BTreeMap<String, K>,
+    pub boundaries: BTreeMap<String, K>,
+    pub facts: BTreeMap<String, Fact<K>>,
     pub participants: BTreeSet<String>,
-    pub constraints: Vec<Constraint>,
+    pub constraints: Vec<Constraint<K>>,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Model {
+pub struct Model<K> {
     pub owners: BTreeSet<String>,
-    pub capacities: BTreeMap<String, Capacity>,
-    pub laws: Vec<Law>,
+    pub capacities: BTreeMap<String, Capacity<K>>,
+    pub laws: Vec<Law<K>>,
 }
 
-impl Model {
-    pub(crate) fn validate(&self) -> Result<(), Error> {
+impl<K> Default for Model<K> {
+    fn default() -> Self {
+        Self {
+            owners: BTreeSet::new(),
+            capacities: BTreeMap::new(),
+            laws: Vec::new(),
+        }
+    }
+}
+
+impl<K: DimensionAlgebra> Model<K> {
+    pub(crate) fn validate(&self) -> Result<(), Error<K>> {
         if self.owners.is_empty() {
             return Err(invalid("model requires at least one owner"));
         }
@@ -184,7 +127,7 @@ impl Model {
         Ok(())
     }
 
-    pub(crate) fn owner(&self, owner: &str) -> Result<(), Error> {
+    pub(crate) fn owner(&self, owner: &str) -> Result<(), Error<K>> {
         if !self.owners.contains(owner) {
             return Err(invalid(format!("undeclared owner {owner}")));
         }
@@ -193,15 +136,25 @@ impl Model {
 }
 
 /// Validated internal definitions. Payloads survive immutable root transitions.
-#[derive(Clone, Debug, Default)]
-pub(crate) struct ValidatedModel {
+#[derive(Clone, Debug)]
+pub(crate) struct ValidatedModel<K> {
     pub(crate) owners: BTreeSet<String>,
-    pub(crate) capacities: BTreeMap<String, Arc<Capacity>>,
-    pub(crate) laws: BTreeMap<String, Arc<Law>>,
+    pub(crate) capacities: BTreeMap<String, Arc<Capacity<K>>>,
+    pub(crate) laws: BTreeMap<String, Arc<Law<K>>>,
 }
 
-impl ValidatedModel {
-    pub(crate) fn new(model: &Model) -> Result<Self, Error> {
+impl<K> Default for ValidatedModel<K> {
+    fn default() -> Self {
+        Self {
+            owners: BTreeSet::new(),
+            capacities: BTreeMap::new(),
+            laws: BTreeMap::new(),
+        }
+    }
+}
+
+impl<K: DimensionAlgebra> ValidatedModel<K> {
+    pub(crate) fn new(model: &Model<K>) -> Result<Self, Error<K>> {
         model.validate()?;
         Ok(Self {
             owners: model.owners.clone(),
@@ -218,7 +171,7 @@ impl ValidatedModel {
         })
     }
 
-    pub(crate) fn extended(&self, declarations: &Model) -> Result<Self, Error> {
+    pub(crate) fn extended(&self, declarations: &Model<K>) -> Result<Self, Error<K>> {
         let mut next = self.clone();
         for owner in &declarations.owners {
             identifier(owner)?;
@@ -257,32 +210,39 @@ impl ValidatedModel {
         Ok(next)
     }
 
-    pub(crate) fn owner(&self, owner: &str) -> Result<(), Error> {
+    pub(crate) fn owner(&self, owner: &str) -> Result<(), Error<K>> {
         if !self.owners.contains(owner) {
             return Err(invalid(format!("undeclared owner {owner}")));
         }
         Ok(())
     }
 
-    pub(crate) fn stock(&self, stock: &Stock) -> Result<(), Error> {
+    pub(crate) fn stock(&self, stock: &Stock<K>) -> Result<(), Error<K>> {
         identifier(&stock.id)?;
         self.owner(&stock.owner)?;
-        stock.dimension.validate()?;
         for (id, weight) in &stock.capacities {
             let capacity = self
                 .capacities
                 .get(id)
                 .ok_or_else(|| invalid(format!("undeclared capacity {id}")))?;
             weight.validate()?;
-            if weight.amount.is_negative() || stock.domain == Domain::Signed {
+            let floored = stock.kind.floor().is_some_and(|floor| !floor.is_negative());
+            if weight.amount.is_negative() || !floored {
                 return Err(invalid(
                     "capacity weights require nonnegative stocks and weights",
                 ));
             }
-            let dimension = weight.dimension.product(&stock.dimension)?;
-            if dimension != capacity.maximum.dimension {
-                return Err(Error::Dimension {
-                    context: format!("capacity {id}"),
+            let dimensions = K::product(&weight.kind.dimensions(), &stock.kind.dimensions())
+                .map_err(Error::Algebra)?;
+            let maximum = capacity.maximum.kind.dimensions();
+            if dimensions != maximum {
+                return Err(Error::Dimensions {
+                    context: DimensionContext::Capacity {
+                        capacity: id.clone(),
+                        stock: stock.id.clone(),
+                    },
+                    left: dimensions,
+                    right: maximum,
                 });
             }
         }
@@ -290,14 +250,15 @@ impl ValidatedModel {
     }
 }
 
-fn validate_law(law: &Law, check_owner: impl Fn(&str) -> Result<(), Error>) -> Result<(), Error> {
-    for (id, dimension) in law.slots.iter().chain(&law.boundaries) {
+fn validate_law<K: DimensionAlgebra>(
+    law: &Law<K>,
+    check_owner: impl Fn(&str) -> Result<(), Error<K>>,
+) -> Result<(), Error<K>> {
+    for id in law.slots.keys().chain(law.boundaries.keys()) {
         identifier(id)?;
-        dimension.validate()?;
     }
     for (id, fact) in &law.facts {
         identifier(id)?;
-        fact.dimension.validate()?;
         check_owner(&fact.owner)?;
         if !law.participants.contains(&fact.owner) {
             return Err(invalid("fact owner must be a required participant"));
@@ -335,19 +296,20 @@ fn validate_law(law: &Law, check_owner: impl Fn(&str) -> Result<(), Error>) -> R
 mod validation_tests {
     use super::*;
     use crate::Expr;
+    use conservation_test_kinds::TestKind;
 
-    fn law(id: &str) -> Law {
-        let mass = Dimension::base("mass").unwrap();
+    fn law(id: &str) -> Law<TestKind> {
+        let mass = TestKind::Material;
         Law {
             id: id.into(),
-            slots: BTreeMap::from([("stock".into(), mass.clone())]),
+            slots: BTreeMap::from([("stock".into(), mass)]),
             boundaries: BTreeMap::new(),
             facts: BTreeMap::new(),
             participants: BTreeSet::from(["owner".into()]),
             constraints: vec![Constraint::equal(
                 "zero",
                 Expr::delta("stock"),
-                Expr::constant(zero(&mass)),
+                Expr::constant(zero(mass)),
             )],
         }
     }
@@ -359,7 +321,7 @@ mod validation_tests {
             capacities: BTreeMap::from([(
                 "hold".into(),
                 Capacity {
-                    maximum: zero(&Dimension::base("mass").unwrap()),
+                    maximum: zero(TestKind::Material),
                 },
             )]),
             laws: vec![law("hold")],
@@ -384,10 +346,7 @@ mod validation_tests {
         invalid.capacities.insert(
             "negative".into(),
             Capacity {
-                maximum: Quantity::new(
-                    BigRational::from_integer((-1).into()),
-                    Dimension::base("mass").unwrap(),
-                ),
+                maximum: Quantity::new(BigRational::from_integer((-1).into()), TestKind::Material),
             },
         );
         cases.push(invalid);
@@ -431,19 +390,19 @@ mod validation_tests {
 /// One declarative request. All new stocks start at zero; funding requires a law.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Exchange {
+pub struct Exchange<K> {
     pub id: String,
     pub law: String,
     pub bindings: BTreeMap<String, String>,
-    pub deltas: BTreeMap<String, Quantity>,
-    pub boundaries: BTreeMap<String, Quantity>,
-    pub creates: Vec<Stock>,
+    pub deltas: BTreeMap<String, Quantity<K>>,
+    pub boundaries: BTreeMap<String, Quantity<K>>,
+    pub creates: Vec<Stock<K>>,
     pub removes: BTreeSet<String>,
-    pub moves: BTreeMap<String, Placement>,
-    pub declarations: Option<Model>,
+    pub moves: BTreeMap<String, Placement<K>>,
+    pub declarations: Option<Model<K>>,
 }
 
-impl Exchange {
+impl<K: DimensionAlgebra> Exchange<K> {
     pub fn new(id: impl Into<String>, law: impl Into<String>) -> Self {
         Self {
             id: id.into(),
@@ -467,15 +426,64 @@ pub struct RecordWrite {
     pub value: Option<Vec<u8>>,
 }
 
+/// Where two kinds were required to be identical.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Error {
-    Invalid(String),
-    Dimension {
-        context: String,
-    },
-    Domain {
+pub enum KindContext {
+    /// An exchange leg: the stock bound to a law slot.
+    Slot {
+        slot: String,
         stock: String,
+    },
+    Delta {
+        slot: String,
+    },
+    Boundary {
+        port: String,
+    },
+    Fact {
+        fact: String,
+    },
+    Sum,
+    Constraint {
+        id: String,
+    },
+}
+
+/// Where a computed quantity's dimensions were compared.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DimensionContext {
+    Sum,
+    Constraint { id: String },
+    Capacity { capacity: String, stock: String },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Error<K: DimensionAlgebra> {
+    Invalid(String),
+    /// Two kinds that must be identical differ. Both are named.
+    Kinds {
+        context: KindContext,
+        expected: K,
+        found: K,
+    },
+    /// A computed (derived) quantity's dimensions differ from the other side's.
+    Dimensions {
+        context: DimensionContext,
+        left: K::Dimensions,
+        right: K::Dimensions,
+    },
+    Algebra(K::AlgebraError),
+    /// The amount lies below the kind's floor. `kind.floor()` recovers the floor.
+    BelowFloor {
+        stock: String,
+        kind: K,
         amount: BigRational,
+    },
+    UnknownKind {
+        name: String,
+    },
+    UnsupportedSnapshot {
+        version: u32,
     },
     Capacity {
         id: String,
@@ -498,20 +506,20 @@ pub enum Error {
     Snapshot(String),
 }
 
-impl fmt::Display for Error {
+impl<K: DimensionAlgebra> fmt::Display for Error<K> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{self:?}")
     }
 }
-impl std::error::Error for Error {}
+impl<K: DimensionAlgebra> std::error::Error for Error<K> {}
 
-pub(crate) fn identifier(value: &str) -> Result<(), Error> {
+pub(crate) fn identifier<K: DimensionAlgebra>(value: &str) -> Result<(), Error<K>> {
     nonblank(value).map_err(|error| invalid(error.to_string()))
 }
-pub(crate) fn invalid(message: impl Into<String>) -> Error {
+pub(crate) fn invalid<K: DimensionAlgebra>(message: impl Into<String>) -> Error<K> {
     Error::Invalid(message.into())
 }
-pub(crate) fn rational(value: &BigRational) -> Result<(), Error> {
+pub(crate) fn rational<K: DimensionAlgebra>(value: &BigRational) -> Result<(), Error<K>> {
     if value.denom() <= &0.into() {
         return Err(invalid("rational denominator must be positive"));
     }
@@ -522,6 +530,6 @@ pub(crate) fn rational(value: &BigRational) -> Result<(), Error> {
     Ok(())
 }
 
-pub(crate) fn zero(dimension: &Dimension) -> Quantity {
-    Quantity::new(BigRational::zero(), dimension.clone())
+pub(crate) fn zero<K: DimensionAlgebra>(kind: K) -> Quantity<K> {
+    Quantity::new(BigRational::zero(), kind)
 }

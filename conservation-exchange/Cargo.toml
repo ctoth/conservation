@@ -17,4 +17,5 @@ serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 
 [dev-dependencies]
+conservation-test-kinds = { path = "../conservation-test-kinds" }
 proptest.workspace = true
