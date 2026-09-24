@@ -5,6 +5,7 @@
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
+use std::hash::Hash;
 use std::sync::LazyLock;
 
 use num_rational::BigRational;
@@ -33,13 +34,76 @@ impl fmt::Display for IdentifierError {
 
 impl Error for IdentifierError {}
 
+/// Rejects empty or whitespace-only identifiers. The one declaration of that rule.
+pub fn nonblank(value: &str) -> Result<(), IdentifierError> {
+    if value.trim().is_empty() {
+        Err(IdentifierError::Blank)
+    } else {
+        Ok(())
+    }
+}
+
+/// How a kind's values combine.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum Affine<K> {
+    /// Values and their differences share this kind (mass, energy, money).
+    Linear,
+    /// Values are points; the difference of two points has kind `difference`
+    /// (temperature and temperature_delta).
+    Point { difference: K },
+}
+
+/// A conserved kind: a small `Copy` handle into a registry shared by every stock,
+/// flow and law that names it. `Display` writes the kind's registry name, the
+/// identity [`KindRegistry::resolve`] accepts.
+pub trait Kind: Copy + Eq + Ord + Hash + fmt::Debug + fmt::Display {
+    /// Whether this is a point kind, and which kind its differences have.
+    fn affine(self) -> Affine<Self>;
+    /// The least coordinate a stock of this kind may hold, in the kind's chart;
+    /// `None` when the kind has no floor.
+    fn floor(self) -> Option<BigRational>;
+    /// The kind of a difference of two values of this kind.
+    fn difference(self) -> Self {
+        match self.affine() {
+            Affine::Linear => self,
+            Affine::Point { difference } => difference,
+        }
+    }
+}
+
+/// Dimensional comparison, product and quotient. Only conservation-exchange requires it.
+pub trait DimensionAlgebra: Kind {
+    /// A kind's dimensions. Equality is dimensional comparison.
+    type Dimensions: Clone + Eq + fmt::Debug + fmt::Display;
+    /// Why a product or quotient has no representation (for example exponent overflow).
+    type AlgebraError: Error + Clone + Eq;
+    /// Returns this kind's dimensions.
+    fn dimensions(self) -> Self::Dimensions;
+    /// Returns the dimensions of a product.
+    fn product(
+        left: &Self::Dimensions,
+        right: &Self::Dimensions,
+    ) -> Result<Self::Dimensions, Self::AlgebraError>;
+    /// Returns the dimensions of a quotient.
+    fn quotient(
+        left: &Self::Dimensions,
+        right: &Self::Dimensions,
+    ) -> Result<Self::Dimensions, Self::AlgebraError>;
+}
+
+/// Resolves kind names once, at a document or foreign-language boundary.
+pub trait KindRegistry {
+    /// The handle type this registry resolves names to.
+    type Kind: Kind;
+    /// The handle whose `Display` is `name`, if the registry declares it.
+    fn resolve(&self, name: &str) -> Option<Self::Kind>;
+}
+
 impl AxisId {
     /// Creates an axis identifier.
     pub fn new(value: impl Into<String>) -> Result<Self, IdentifierError> {
         let value = value.into();
-        if value.trim().is_empty() {
-            return Err(IdentifierError::Blank);
-        }
+        nonblank(&value)?;
         Ok(Self(value))
     }
 

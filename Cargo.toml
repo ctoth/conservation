@@ -6,6 +6,7 @@ members = [
     "conservation-linear",
     "conservation-python",
     "conservation-stock-flow",
+    "conservation-test-kinds",
     "conservation-trace",
 ]
 resolver = "3"

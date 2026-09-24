@@ -201,6 +201,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "conservation-test-kinds"
+version = "0.1.0"
+dependencies = [
+ "conservation-core",
+ "num-bigint",
+ "num-rational",
+ "num-traits",
+]
+
+[[package]]
 name = "conservation-trace"
 version = "0.1.0"
 dependencies = [
