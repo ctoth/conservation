@@ -4,9 +4,12 @@ use std::{fmt, mem};
 
 use conservation_core::Kind;
 use num_rational::BigRational;
-use num_traits::{One, Signed, Zero};
+use num_traits::{One, Signed, ToPrimitive, Zero};
 
-use crate::{AppliedFlow, FlowTopology, SettlementReport, StockFlowError, StockId};
+use crate::{
+    AppliedFlow, FlowTopology, ProcessId, Rationing, SettlementReport, StockFlowError, StockId,
+    source_scale,
+};
 
 /// Applied amounts from one compiled settlement, indexed like the topology's flows.
 #[derive(Clone)]
@@ -135,8 +138,16 @@ impl<K: Kind> ExactState<K> {
         amounts: Vec<BigRational>,
     ) -> Result<Self, StockFlowError<K>> {
         validate_count(topology.stocks().len(), amounts.len())?;
-        if amounts.iter().any(Signed::is_negative) {
-            return Err(StockFlowError::NegativeAmount);
+        for (stock, amount) in amounts.iter().enumerate() {
+            if let Some(floor) = topology.kinds()[topology.stock_kind(stock)].floor() {
+                if *amount < floor {
+                    return Err(StockFlowError::InitialBelowFloor {
+                        stock: topology.stocks()[stock].clone(),
+                        floor: Box::new(floor),
+                        amount: Box::new(amount.clone()),
+                    });
+                }
+            }
         }
         let initial = totals(&topology, &amounts);
         let kind_count = topology.kinds().len();
@@ -201,14 +212,26 @@ impl<K: Kind> ExactState<K> {
         requested: &[BigRational],
     ) -> Result<CompiledSettlementReport<BigRational, K>, StockFlowError<K>> {
         validate_count(self.topology.flows().len(), requested.len())?;
-        if requested.iter().any(Signed::is_negative) {
-            return Err(StockFlowError::NegativeAmount);
+        if let Some((index, amount)) = requested
+            .iter()
+            .enumerate()
+            .find(|(_, amount)| amount.is_negative())
+        {
+            return Err(StockFlowError::NegativeFlow {
+                index,
+                process: self.topology.processes()[self.topology.flows()[index].process()].clone(),
+                amount: Box::new(amount.clone()),
+            });
         }
-        let batch = compute_batch(&self.topology, &self.amounts, requested);
+        let batch = compute_exact_batch(&self.topology, &self.amounts, requested)?;
         self.amounts = batch.amounts;
         add_accounts(&mut self.inputs, batch.inputs);
         add_accounts(&mut self.outputs, batch.outputs);
-        debug_assert!(self.amounts.iter().all(|amount| !amount.is_negative()));
+        debug_assert!(self.amounts.iter().enumerate().all(|(stock, amount)| {
+            self.topology.kinds()[self.topology.stock_kind(stock)]
+                .floor()
+                .is_none_or(|floor| *amount >= floor)
+        }));
         Ok(CompiledSettlementReport {
             topology: self.topology.clone(),
             requested: requested.to_vec(),
@@ -226,10 +249,11 @@ impl<K: Kind> ExactState<K> {
 
 /// Fast binary64 amounts and boundary accounts over an immutable topology.
 ///
-/// Every stored value is finite and nonnegative. A settlement that would
-/// overflow is rejected before the state is changed.
+/// Every stored value is finite, and at or above the kind's floor for floored
+/// kinds. A settlement that would overflow is rejected before the state is changed.
 pub struct DenseState<K> {
     topology: Arc<FlowTopology<K>>,
+    floors: Vec<Option<DenseFloor>>,
     amounts: Vec<f64>,
     initial: Vec<f64>,
     inputs: Vec<f64>,
@@ -237,10 +261,18 @@ pub struct DenseState<K> {
     scratch: DenseScratch,
 }
 
+/// A kind's floor, converted once for binary64 settlement.
+#[derive(Clone)]
+struct DenseFloor {
+    value: f64,
+    exact: BigRational,
+}
+
 impl<K: Kind> Clone for DenseState<K> {
     fn clone(&self) -> Self {
         Self {
             topology: self.topology.clone(),
+            floors: self.floors.clone(),
             amounts: self.amounts.clone(),
             initial: self.initial.clone(),
             inputs: self.inputs.clone(),
@@ -280,13 +312,43 @@ impl<K: Kind> DenseState<K> {
         amounts: Vec<f64>,
     ) -> Result<Self, StockFlowError<K>> {
         validate_count(topology.stocks().len(), amounts.len())?;
-        validate_dense(&amounts)?;
+        let floors = topology
+            .kinds()
+            .iter()
+            .map(|kind| {
+                kind.floor()
+                    .map(|floor| match floor.to_f64() {
+                        Some(value) if value.is_finite() => Ok(DenseFloor {
+                            value,
+                            exact: floor,
+                        }),
+                        Some(_) | None => Err(StockFlowError::FloorNotRepresentable {
+                            kind: *kind,
+                            floor: Box::new(floor),
+                        }),
+                    })
+                    .transpose()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        validate_input_finite(&amounts)?;
+        for (stock, amount) in amounts.iter().enumerate() {
+            if let Some(floor) = &floors[topology.stock_kind(stock)] {
+                if *amount < floor.value {
+                    return Err(StockFlowError::InitialBelowFloor {
+                        stock: topology.stocks()[stock].clone(),
+                        floor: Box::new(floor.exact.clone()),
+                        amount: Box::new(from_float(*amount)),
+                    });
+                }
+            }
+        }
         let initial = totals(&topology, &amounts);
         validate_intermediate(&initial)?;
         let kind_count = topology.kinds().len();
         let scratch = DenseScratch::new(&topology);
         Ok(Self {
             topology,
+            floors,
             amounts,
             initial,
             inputs: vec![0.0; kind_count],
@@ -300,7 +362,8 @@ impl<K: Kind> DenseState<K> {
         &self.topology
     }
 
-    /// Finite, nonnegative stock amounts in stable stock-index order.
+    /// Stock amounts in stable stock-index order: finite, and at or above the
+    /// kind's floor for floored kinds.
     pub fn amounts(&self) -> &[f64] {
         &self.amounts
     }
@@ -357,14 +420,14 @@ impl<K: Kind> DenseState<K> {
                 self.outputs[index],
                 current,
             ];
-            let scale = terms.iter().copied().fold(0.0_f64, f64::max);
+            let scale = terms.iter().map(|term| term.abs()).fold(0.0_f64, f64::max);
             let residual = self.balance_residual(kind);
             residual.is_finite()
                 && (scale == 0.0
                     || (residual / scale).abs()
                         <= tolerance.absolute / scale
                             + tolerance.relative
-                                * terms.iter().map(|term| term / scale).sum::<f64>())
+                                * terms.iter().map(|term| term.abs() / scale).sum::<f64>())
         })
     }
 
@@ -394,19 +457,39 @@ impl<K: Kind> DenseState<K> {
 
     fn settle_reusing_scratch(&mut self, requested: &[f64]) -> Result<(), StockFlowError<K>> {
         validate_count(self.topology.flows().len(), requested.len())?;
-        validate_dense(requested)?;
-        compute_dense_batch(&self.topology, &self.amounts, requested, &mut self.scratch)?;
+        validate_input_finite(requested)?;
+        if let Some((index, amount)) = requested
+            .iter()
+            .enumerate()
+            .find(|(_, amount)| **amount < 0.0)
+        {
+            return Err(StockFlowError::NegativeFlow {
+                index,
+                process: self.topology.processes()[self.topology.flows()[index].process()].clone(),
+                amount: Box::new(from_float(*amount)),
+            });
+        }
+        compute_dense_batch(
+            &self.topology,
+            &self.floors,
+            &self.amounts,
+            requested,
+            &mut self.scratch,
+        )?;
 
         // A proportional binary64 sum can exceed its source by a few ulps.
-        // The exact kernel reaches zero; clamp only that representation noise.
+        // The exact kernel reaches the floor; clamp only that representation noise.
+        let tol = DenseTolerance::default();
         for (index, amount) in self.scratch.next_amounts.iter_mut().enumerate() {
-            if *amount < 0.0 {
-                let allowance = DenseTolerance::default().absolute
-                    + DenseTolerance::default().relative * self.amounts[index].abs();
-                if amount.abs() > allowance {
-                    return Err(StockFlowError::ArithmeticOverflow);
+            if let Some(floor) = &self.floors[self.topology.stock_kind(index)] {
+                if *amount < floor.value {
+                    let allowance = tol.absolute
+                        + tol.relative * (self.amounts[index].abs() + floor.value.abs());
+                    if floor.value - *amount > allowance {
+                        return Err(StockFlowError::ArithmeticOverflow);
+                    }
+                    *amount = floor.value;
                 }
-                *amount = 0.0;
             }
         }
         validate_intermediate(&self.scratch.next_amounts)?;
@@ -525,28 +608,61 @@ struct Batch<N> {
     applied: Vec<N>,
 }
 
-fn compute_batch<N, K: Kind>(topology: &FlowTopology<K>, amounts: &[N], requested: &[N]) -> Batch<N>
-where
-    N: SettlementNumber,
-{
+/// The least `Refuse` process with a positive request drawing on `stock`.
+fn refusing_process<K: Kind, N>(
+    topology: &FlowTopology<K>,
+    stock: usize,
+    requested: &[N],
+    positive: impl Fn(&N) -> bool,
+) -> Option<ProcessId> {
+    topology
+        .flows()
+        .iter()
+        .zip(requested)
+        .filter(|(flow, request)| {
+            flow.source() == Some(stock)
+                && positive(request)
+                && topology.process_rationing(flow.process()) == Rationing::Refuse
+        })
+        .map(|(flow, _)| &topology.processes()[flow.process()])
+        .min()
+        .cloned()
+}
+
+fn compute_exact_batch<K: Kind>(
+    topology: &FlowTopology<K>,
+    amounts: &[BigRational],
+    requested: &[BigRational],
+) -> Result<Batch<BigRational>, StockFlowError<K>> {
     let mut requested_terms = vec![Vec::new(); amounts.len()];
     for (flow, amount) in topology.flows().iter().zip(requested) {
         if let Some(source) = flow.source() {
             requested_terms[source].push(amount.clone());
         }
     }
-    let requested_by_source: Vec<_> = requested_terms.into_iter().map(N::sum_terms).collect();
-    let scales: Vec<_> = requested_by_source
+    let requested_by_source: Vec<_> = requested_terms
+        .into_iter()
+        .map(BigRational::sum_terms)
+        .collect();
+    let floors = topology
+        .kinds()
+        .iter()
+        .map(|kind| kind.floor())
+        .collect::<Vec<_>>();
+    let scales = requested_by_source
         .iter()
         .zip(amounts)
-        .map(|(requested, available)| {
-            if requested.is_zero() || requested <= available {
-                N::one()
-            } else {
-                available.clone() / requested.clone()
-            }
+        .enumerate()
+        .map(|(stock, (withdrawal, available))| {
+            source_scale(
+                &topology.stocks()[stock],
+                floors[topology.stock_kind(stock)].clone(),
+                available,
+                withdrawal,
+                || refusing_process(topology, stock, requested, |request| request.is_positive()),
+            )
         })
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
 
     let mut incoming_terms = vec![Vec::new(); amounts.len()];
     let mut outgoing_terms = vec![Vec::new(); amounts.len()];
@@ -572,10 +688,16 @@ where
         applied.push(amount);
     }
 
-    let outgoing = outgoing_terms.into_iter().map(N::sum_terms);
-    let incoming = incoming_terms.into_iter().map(N::sum_terms);
-    let inputs = input_terms.into_iter().map(N::sum_terms).collect();
-    let outputs = output_terms.into_iter().map(N::sum_terms).collect();
+    let outgoing = outgoing_terms.into_iter().map(BigRational::sum_terms);
+    let incoming = incoming_terms.into_iter().map(BigRational::sum_terms);
+    let inputs = input_terms
+        .into_iter()
+        .map(BigRational::sum_terms)
+        .collect();
+    let outputs = output_terms
+        .into_iter()
+        .map(BigRational::sum_terms)
+        .collect();
 
     let amounts = amounts
         .iter()
@@ -584,16 +706,17 @@ where
         .zip(incoming)
         .map(|((available, outgoing), incoming)| available - outgoing + incoming)
         .collect();
-    Batch {
+    Ok(Batch {
         amounts,
         inputs,
         outputs,
         applied,
-    }
+    })
 }
 
 fn compute_dense_batch<K: Kind>(
     topology: &FlowTopology<K>,
+    floors: &[Option<DenseFloor>],
     amounts: &[f64],
     requested: &[f64],
     scratch: &mut DenseScratch,
@@ -605,16 +728,33 @@ fn compute_dense_batch<K: Kind>(
             scratch.requested_terms[source].push(*amount);
         }
     }
-    for (terms, available) in scratch.requested_terms.iter_mut().zip(amounts) {
+    for (stock, (terms, available)) in scratch.requested_terms.iter_mut().zip(amounts).enumerate() {
         let total = sum_dense_terms(terms);
         if !total.is_finite() {
             return Err(StockFlowError::ArithmeticOverflow);
         }
-        scratch.scales.push(if total == 0.0 || total <= *available {
-            1.0
-        } else {
-            *available / total
-        });
+        let scale = match &floors[topology.stock_kind(stock)] {
+            None => 1.0,
+            Some(floor) => {
+                let headroom = *available - floor.value;
+                if total == 0.0 || total <= headroom {
+                    1.0
+                } else if let Some(process) =
+                    refusing_process(topology, stock, requested, |request| *request > 0.0)
+                {
+                    return Err(StockFlowError::BelowFloor {
+                        stock: topology.stocks()[stock].clone(),
+                        floor: Box::new(floor.exact.clone()),
+                        process,
+                        available: Box::new(from_float(*available)),
+                        withdrawal: Box::new(from_float(total)),
+                    });
+                } else {
+                    headroom / total
+                }
+            }
+        };
+        scratch.scales.push(scale);
     }
 
     clear_groups(&mut scratch.incoming_terms);
@@ -647,13 +787,15 @@ fn compute_dense_batch<K: Kind>(
         .enumerate()
     {
         let outgoing = sum_dense_terms(outgoing);
-        let remaining = if scratch.scales[stock] < 1.0 {
-            // A source-limited group consumes the available stock exactly.
-            // Reusing `available - sum(request * scale)` would leave a
-            // model-scale-dependent binary64 cancellation residue.
-            0.0
-        } else {
-            *available - outgoing
+        // A rationed group takes the stock exactly to its floor. Reusing
+        // `available - sum(request * scale)` would leave a model-scale-dependent
+        // binary64 cancellation residue.
+        let remaining = match (
+            scratch.scales[stock] < 1.0,
+            &floors[topology.stock_kind(stock)],
+        ) {
+            (true, Some(floor)) => floor.value,
+            (false, _) | (true, None) => *available - outgoing,
         };
         scratch
             .next_amounts
@@ -788,12 +930,9 @@ fn validate_count<K: Kind>(expected: usize, actual: usize) -> Result<(), StockFl
     }
 }
 
-fn validate_dense<K: Kind>(amounts: &[f64]) -> Result<(), StockFlowError<K>> {
-    validate_input_finite(amounts)?;
-    if amounts.iter().any(|amount| *amount < 0.0) {
-        return Err(StockFlowError::NegativeAmount);
-    }
-    Ok(())
+/// The exact value of a finite binary64 input or intermediate.
+fn from_float(value: f64) -> BigRational {
+    BigRational::from_float(value).expect("validated finite")
 }
 
 fn validate_input_finite<K: Kind>(amounts: &[f64]) -> Result<(), StockFlowError<K>> {

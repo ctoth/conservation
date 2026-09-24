@@ -1,5 +1,6 @@
 use conservation_dynamics::{
-    ProcessId, ProposedFlow, StockFlowError, StockFlowSystem, StockId, StockSpec,
+    ProcessDefinition, ProcessId, ProposedFlow, Rationing, StockFlowError, StockFlowSystem,
+    StockId, StockSpec,
 };
 use conservation_test_kinds::TestKind;
 use num_bigint::BigInt;
@@ -20,18 +21,27 @@ fn process(value: &str) -> ProcessId {
 }
 
 fn system(a: i64, b: i64) -> StockFlowSystem<TestKind> {
-    StockFlowSystem::new([
-        StockSpec {
-            id: id("a"),
-            kind: TestKind::Material,
-            initial: integer(a),
-        },
-        StockSpec {
-            id: id("b"),
-            kind: TestKind::Material,
-            initial: integer(b),
-        },
-    ])
+    StockFlowSystem::new(
+        [
+            StockSpec {
+                id: id("a"),
+                kind: TestKind::Material,
+                initial: integer(a),
+            },
+            StockSpec {
+                id: id("b"),
+                kind: TestKind::Material,
+                initial: integer(b),
+            },
+        ],
+        [
+            "ab", "ba", "export", "first", "input", "invalid", "move", "output", "second", "valid",
+        ]
+        .map(|name| ProcessDefinition {
+            id: process(name),
+            rationing: Rationing::Ration,
+        }),
+    )
     .unwrap()
 }
 
@@ -80,6 +90,53 @@ fn a_malformed_batch_is_atomic() {
         .unwrap_err();
     assert!(matches!(error, StockFlowError::UnknownStock(_)));
     assert_eq!(state, before);
+}
+
+fn signed_system(stocks: &[(&str, i64)]) -> StockFlowSystem<TestKind> {
+    StockFlowSystem::new(
+        stocks.iter().map(|(name, initial)| StockSpec {
+            id: id(name),
+            kind: TestKind::MaterialBalance,
+            initial: integer(*initial),
+        }),
+        [],
+    )
+    .unwrap()
+}
+
+#[test]
+fn floorless_stock_accepts_negative_initial_amount_and_settles_below_zero() {
+    let mut state = signed_system(&[("a", -2)]);
+    state
+        .settle(&[ProposedFlow {
+            process: process("export"),
+            kind: TestKind::MaterialBalance,
+            source: Some(id("a")),
+            target: None,
+            amount: integer(5),
+        }])
+        .unwrap();
+
+    assert_eq!(state.amount(&id("a")), Some(&integer(-7)));
+    assert!(state.balance_residual(TestKind::MaterialBalance).is_zero());
+}
+
+#[test]
+fn signed_stock_settles_from_plus_two_to_minus_three_through_one_flow() {
+    let mut state = signed_system(&[("p", 2), ("q", 0)]);
+    state
+        .settle(&[ProposedFlow {
+            process: process("push"),
+            kind: TestKind::MaterialBalance,
+            source: Some(id("p")),
+            target: Some(id("q")),
+            amount: integer(5),
+        }])
+        .unwrap();
+
+    assert_eq!(state.amount(&id("p")), Some(&integer(-3)));
+    assert_eq!(state.amount(&id("q")), Some(&integer(5)));
+    assert!(state.balance_residual(TestKind::MaterialBalance).is_zero());
 }
 
 proptest! {

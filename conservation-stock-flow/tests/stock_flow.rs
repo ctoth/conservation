@@ -1,8 +1,10 @@
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use conservation_core::{AxisId, BalanceLaw, Grade, GradedLaw, Provenance};
 use conservation_dynamics::{
-    ExactState, FlowSpec, FlowTopology, ProcessId, StockDefinition, StockId,
+    ExactState, FlowSpec, FlowTopology, ProcessDefinition, ProcessId, Rationing, StockDefinition,
+    StockId,
 };
 use conservation_stock_flow::{
     BoundaryCorrespondence, BoundaryId, BoundaryVerdict, ChannelId, ExactAmounts,
@@ -86,7 +88,21 @@ fn topology(reordered: bool) -> Arc<FlowTopology<TestKind>> {
     } else {
         (vec![a, b], vec![f1, f2, input, output])
     };
-    Arc::new(FlowTopology::new(stocks, flows).unwrap())
+    let processes = ration_all(&flows);
+    Arc::new(FlowTopology::new(stocks, flows, processes).unwrap())
+}
+
+fn ration_all(flows: &[FlowSpec<TestKind>]) -> Vec<ProcessDefinition> {
+    flows
+        .iter()
+        .map(|flow| flow.process.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .map(|id| ProcessDefinition {
+            id,
+            rationing: Rationing::Ration,
+        })
+        .collect()
 }
 
 fn carrier(reordered: bool) -> Arc<StockFlowCarrier<TestKind>> {
