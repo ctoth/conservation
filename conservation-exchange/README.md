@@ -137,7 +137,9 @@ tolerances small enough to resolve the signal; the tests include a `9/100` energ
 release from a `1/10^18` material change beside a `10^30` material stock.
 
 There is no dense backend in this release. Existing `conservation-dynamics`
-continues to provide proportional flow settlement for its own consumers. A Pyspace
+settles flows for its own consumers: a withdrawal that would breach a stock's
+floor is refused by default, and proportional limiting applies only when every
+process withdrawing from that floored stock is declared `Ration`. A Pyspace
 quantity must not be mirrored into both engines as independently mutable state.
 
 ## Identity, topology and snapshots
