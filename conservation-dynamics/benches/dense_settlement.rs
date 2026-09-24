@@ -14,14 +14,14 @@ use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
 
-use conservation_core::KindId;
 use conservation_dynamics::{
     DenseState, FlowSpec, FlowTopology, ProcessId, StockDefinition, StockId,
 };
+use conservation_test_kinds::TestKind;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 struct Fixture {
-    topology: Arc<FlowTopology>,
+    topology: Arc<FlowTopology<TestKind>>,
     initial: Vec<f64>,
     requested: Vec<f64>,
 }
@@ -31,20 +31,19 @@ fn fixture(stock_count: usize) -> Fixture {
 }
 
 fn circulation_fixture(stock_count: usize, initial: f64, branch_requests: &[f64]) -> Fixture {
-    let material = KindId::new("material").unwrap();
+    let material = TestKind::Material;
     let stocks: Vec<_> = (0..stock_count)
         .map(|index| StockDefinition {
             id: StockId::new(format!("stock-{index}")).unwrap(),
-            kind: material.clone(),
+            kind: material,
         })
         .collect();
     let fanout = branch_requests.len().min(stock_count - 1);
     let flows: Vec<_> = (0..stock_count)
         .flat_map(|source| {
-            let material = material.clone();
             (1..=fanout).map(move |offset| FlowSpec {
                 process: ProcessId::new(format!("move-{source}-{offset}")).unwrap(),
-                kind: material.clone(),
+                kind: material,
                 source: Some(StockId::new(format!("stock-{source}")).unwrap()),
                 target: Some(
                     StockId::new(format!("stock-{}", (source + offset) % stock_count)).unwrap(),
@@ -63,11 +62,11 @@ fn circulation_fixture(stock_count: usize, initial: f64, branch_requests: &[f64]
 }
 
 fn boundary_fixture(stock_count: usize) -> Fixture {
-    let material = KindId::new("material").unwrap();
+    let material = TestKind::Material;
     let stocks: Vec<_> = (0..stock_count)
         .map(|index| StockDefinition {
             id: StockId::new(format!("stock-{index}")).unwrap(),
-            kind: material.clone(),
+            kind: material,
         })
         .collect();
     let flows: Vec<_> = (0..stock_count)
@@ -76,13 +75,13 @@ fn boundary_fixture(stock_count: usize) -> Fixture {
             [
                 FlowSpec {
                     process: ProcessId::new(format!("input-{index}")).unwrap(),
-                    kind: material.clone(),
+                    kind: material,
                     source: None,
                     target: Some(stock.clone()),
                 },
                 FlowSpec {
                     process: ProcessId::new(format!("output-{index}")).unwrap(),
-                    kind: material.clone(),
+                    kind: material,
                     source: Some(stock),
                     target: None,
                 },

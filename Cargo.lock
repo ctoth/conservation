@@ -134,6 +134,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 name = "conservation-core"
 version = "0.1.0"
 dependencies = [
+ "conservation-test-kinds",
  "num-bigint",
  "num-rational",
  "num-traits",
@@ -144,6 +145,7 @@ name = "conservation-dynamics"
 version = "0.1.0"
 dependencies = [
  "conservation-core",
+ "conservation-test-kinds",
  "criterion",
  "num-bigint",
  "num-rational",
@@ -169,6 +171,7 @@ name = "conservation-linear"
 version = "0.1.0"
 dependencies = [
  "conservation-core",
+ "conservation-test-kinds",
  "num-bigint",
  "num-integer",
  "num-rational",
@@ -193,6 +196,7 @@ dependencies = [
  "conservation-core",
  "conservation-dynamics",
  "conservation-linear",
+ "conservation-test-kinds",
  "conservation-trace",
  "num-bigint",
  "num-rational",
@@ -215,6 +219,7 @@ name = "conservation-trace"
 version = "0.1.0"
 dependencies = [
  "conservation-core",
+ "conservation-test-kinds",
  "num-bigint",
  "num-rational",
  "num-traits",

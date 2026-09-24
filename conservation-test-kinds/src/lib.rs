@@ -9,7 +9,8 @@ use conservation_core::{Affine, DimensionAlgebra, Kind, KindRegistry};
 use num_rational::BigRational;
 use num_traits::Zero;
 
-/// Variants are declared in name order, so `Ord` equals the former `KindId` string order.
+/// Variants are declared in name order, so `Ord` equals the former kind-identifier
+/// string order.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum TestKind {
     Amount,

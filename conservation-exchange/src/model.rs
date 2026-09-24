@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
 
-use conservation_core::KindId;
+use conservation_core::nonblank;
 use num_rational::BigRational;
 use num_traits::{Signed, Zero};
 use serde::{Deserialize, Serialize};
@@ -506,9 +506,7 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {}
 
 pub(crate) fn identifier(value: &str) -> Result<(), Error> {
-    KindId::new(value)
-        .map(|_| ())
-        .map_err(|error| invalid(error.to_string()))
+    nonblank(value).map_err(|error| invalid(error.to_string()))
 }
 pub(crate) fn invalid(message: impl Into<String>) -> Error {
     Error::Invalid(message.into())

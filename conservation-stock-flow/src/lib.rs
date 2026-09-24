@@ -11,7 +11,9 @@ use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 
-use conservation_core::{AxisId, BalanceLaw, BalanceLawError, GradedLaw, IdentifierError, KindId};
+use conservation_core::{
+    AxisId, BalanceLaw, BalanceLawError, GradedLaw, IdentifierError, Kind, nonblank,
+};
 use conservation_dynamics::{
     CompiledSettlementReport, FlowRole, FlowTopology, StockFlowError as DynamicsError, StockId,
 };
@@ -30,9 +32,7 @@ macro_rules! identifier {
             /// Creates a nonblank identifier.
             pub fn new(value: impl Into<String>) -> Result<Self, IdentifierError> {
                 let value = value.into();
-                if value.trim().is_empty() {
-                    return Err(IdentifierError::Blank);
-                }
+                nonblank(&value)?;
                 Ok(Self(value))
             }
 
@@ -129,34 +129,34 @@ pub enum ChannelId {
 
 /// Declares one cumulative ledger and its projected trace axis.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LedgerDefinition {
+pub struct LedgerDefinition<K> {
     /// Stable ledger identifier used by correspondence sentences.
     pub id: LedgerId,
     /// Axis used by graded state-trace projections.
     pub axis: AxisId,
     /// Quantity kind accumulated by the ledger.
-    pub kind: KindId,
+    pub kind: K,
     /// Nonempty same-kind input or output ports accumulated by the ledger.
     pub boundaries: Vec<BoundaryId>,
 }
 
 /// Canonical identity of one cumulative boundary ledger.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LedgerIdentity {
+pub struct LedgerIdentity<K> {
     axis: AxisId,
-    kind: KindId,
+    kind: K,
     boundaries: BTreeSet<BoundaryId>,
 }
 
-impl LedgerIdentity {
+impl<K: Kind> LedgerIdentity<K> {
     /// Axis used by graded state-trace projections.
     pub fn axis(&self) -> &AxisId {
         &self.axis
     }
 
     /// Quantity kind accumulated by the ledger.
-    pub fn kind(&self) -> &KindId {
-        &self.kind
+    pub fn kind(&self) -> K {
+        self.kind
     }
 
     /// Canonical mapped boundary ports.
@@ -167,19 +167,19 @@ impl LedgerIdentity {
 
 /// A canonical exact matrix over named axes and typed columns.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ExactEffectMatrix<C> {
-    rows: BTreeMap<AxisId, KindId>,
-    columns: BTreeMap<C, KindId>,
+pub struct ExactEffectMatrix<C, K> {
+    rows: BTreeMap<AxisId, K>,
+    columns: BTreeMap<C, K>,
     entries: BTreeMap<(AxisId, C), BigRational>,
 }
 
-impl<C> ExactEffectMatrix<C>
+impl<C, K: Kind> ExactEffectMatrix<C, K>
 where
     C: Clone + Ord,
 {
     fn new(
-        rows: BTreeMap<AxisId, KindId>,
-        columns: BTreeMap<C, KindId>,
+        rows: BTreeMap<AxisId, K>,
+        columns: BTreeMap<C, K>,
         entry: impl Fn(&AxisId, &C) -> BigRational,
     ) -> Self {
         let entries = rows
@@ -208,13 +208,13 @@ where
     }
 
     /// Returns the kind of a row axis.
-    pub fn axis_kind(&self, axis: &AxisId) -> Option<&KindId> {
-        self.rows.get(axis)
+    pub fn axis_kind(&self, axis: &AxisId) -> Option<K> {
+        self.rows.get(axis).copied()
     }
 
     /// Returns the kind of a matrix column.
-    pub fn column_kind(&self, column: &C) -> Option<&KindId> {
-        self.columns.get(column)
+    pub fn column_kind(&self, column: &C) -> Option<K> {
+        self.columns.get(column).copied()
     }
 
     /// Returns an exact matrix coefficient, or `None` outside the total shape.
@@ -225,26 +225,26 @@ where
 
 /// Canonical carrier identity retained by records and witnesses.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CarrierIdentity {
-    internal: ExactEffectMatrix<FlowId>,
-    boundary: ExactEffectMatrix<BoundaryId>,
-    ledgers: BTreeMap<LedgerId, LedgerIdentity>,
+pub struct CarrierIdentity<K> {
+    internal: ExactEffectMatrix<FlowId, K>,
+    boundary: ExactEffectMatrix<BoundaryId, K>,
+    ledgers: BTreeMap<LedgerId, LedgerIdentity<K>>,
     boundary_roles: BTreeMap<BoundaryId, FlowRole>,
 }
 
-impl CarrierIdentity {
+impl<K: Kind> CarrierIdentity<K> {
     /// Exact internal incidence matrix.
-    pub fn internal_effects(&self) -> &ExactEffectMatrix<FlowId> {
+    pub fn internal_effects(&self) -> &ExactEffectMatrix<FlowId, K> {
         &self.internal
     }
 
     /// Exact boundary incidence matrix.
-    pub fn boundary_effects(&self) -> &ExactEffectMatrix<BoundaryId> {
+    pub fn boundary_effects(&self) -> &ExactEffectMatrix<BoundaryId, K> {
         &self.boundary
     }
 
     /// Canonical cumulative-ledger definitions.
-    pub fn ledgers(&self) -> &BTreeMap<LedgerId, LedgerIdentity> {
+    pub fn ledgers(&self) -> &BTreeMap<LedgerId, LedgerIdentity<K>> {
         &self.ledgers
     }
 
@@ -255,34 +255,34 @@ impl CarrierIdentity {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct InternalColumn {
-    kind: KindId,
+struct InternalColumn<K> {
+    kind: K,
     source: AxisId,
     target: AxisId,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct BoundaryColumn {
-    kind: KindId,
+struct BoundaryColumn<K> {
+    kind: K,
     stock: AxisId,
     role: FlowRole,
 }
 
 /// Immutable exact stock-flow carrier compiled over the settlement topology.
 #[derive(Clone, Debug)]
-pub struct StockFlowCarrier {
-    topology: Arc<FlowTopology>,
-    identity: CarrierIdentity,
+pub struct StockFlowCarrier<K> {
+    topology: Arc<FlowTopology<K>>,
+    identity: CarrierIdentity<K>,
     axes_by_stock: BTreeMap<StockId, AxisId>,
-    internal: BTreeMap<FlowId, InternalColumn>,
-    boundaries: BTreeMap<BoundaryId, BoundaryColumn>,
+    internal: BTreeMap<FlowId, InternalColumn<K>>,
+    boundaries: BTreeMap<BoundaryId, BoundaryColumn<K>>,
     slot_channels: Vec<ChannelId>,
 }
 
 /// Structural failure constructing or using an exact stock-flow carrier.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
-pub enum StockFlowError {
+pub enum StockFlowError<K> {
     /// Stock-axis declarations do not cover the topology exactly.
     StockAxisCount { expected: usize, actual: usize },
     /// A stock was assigned more than one axis.
@@ -305,7 +305,7 @@ pub enum StockFlowError {
     /// A ledger identifier occurred more than once.
     DuplicateLedger(LedgerId),
     /// A ledger declares a kind absent from the carrier.
-    UnknownKind(KindId),
+    UnknownKind(K),
     /// An exact vector repeats one symbol.
     DuplicateValue(SymbolId),
     /// An exact amount was negative.
@@ -318,8 +318,8 @@ pub enum StockFlowError {
     KindMismatch {
         role: ValueRole,
         symbol: SymbolId,
-        expected: KindId,
-        actual: KindId,
+        expected: K,
+        actual: K,
     },
     /// A settled amount exceeded its requested amount.
     SettledExceedsRequested {
@@ -336,7 +336,7 @@ pub enum StockFlowError {
     /// Adjacent cumulative-ledger states are not continuous.
     DiscontinuousLedger { transition: usize, ledger: LedgerId },
     /// Existing settlement validation rejected a report.
-    Settlement(DynamicsError),
+    Settlement(DynamicsError<K>),
     /// Projection into the existing exact trace carrier failed.
     TraceState(TraceStateError),
     /// A semantic checker cannot witness an empty transition trace.
@@ -361,15 +361,15 @@ pub enum StockFlowError {
     SentenceKindMismatch {
         sentence: SentenceId,
         symbol: SymbolId,
-        expected: KindId,
-        actual: KindId,
+        expected: K,
+        actual: K,
     },
     /// A ledger mapping combines symbols of different kinds.
     LedgerBoundaryKindMismatch {
         ledger: LedgerId,
         boundary: BoundaryId,
-        ledger_kind: KindId,
-        boundary_kind: KindId,
+        ledger_kind: K,
+        boundary_kind: K,
     },
     /// Existing graded trace checking rejected the projected model.
     Trace(TraceError),
@@ -392,7 +392,7 @@ pub enum StockFlowError {
     DuplicateSentence(SentenceId),
 }
 
-impl fmt::Display for StockFlowError {
+impl<K: Kind> fmt::Display for StockFlowError<K> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::StockAxisCount { expected, actual } => write!(
@@ -517,33 +517,33 @@ impl fmt::Display for StockFlowError {
     }
 }
 
-impl Error for StockFlowError {}
+impl<K: Kind> Error for StockFlowError<K> {}
 
-impl From<DynamicsError> for StockFlowError {
-    fn from(error: DynamicsError) -> Self {
+impl<K: Kind> From<DynamicsError<K>> for StockFlowError<K> {
+    fn from(error: DynamicsError<K>) -> Self {
         Self::Settlement(error)
     }
 }
 
-impl From<TraceStateError> for StockFlowError {
+impl<K: Kind> From<TraceStateError> for StockFlowError<K> {
     fn from(error: TraceStateError) -> Self {
         Self::TraceState(error)
     }
 }
 
-impl From<TraceError> for StockFlowError {
+impl<K: Kind> From<TraceError> for StockFlowError<K> {
     fn from(error: TraceError) -> Self {
         Self::Trace(error)
     }
 }
 
-impl From<MatrixError> for StockFlowError {
+impl<K: Kind> From<MatrixError> for StockFlowError<K> {
     fn from(error: MatrixError) -> Self {
         Self::Matrix(error)
     }
 }
 
-impl From<BalanceLawError> for StockFlowError {
+impl<K: Kind> From<BalanceLawError> for StockFlowError<K> {
     fn from(error: BalanceLawError) -> Self {
         Self::BalanceLaw(error)
     }
@@ -576,17 +576,17 @@ impl fmt::Display for ValueRole {
     }
 }
 
-impl StockFlowCarrier {
+impl<K: Kind> StockFlowCarrier<K> {
     /// Compiles exact incidence matrices and canonical symbol tables.
     ///
     /// `channels` follows the topology's stable flow-slot order; every other
     /// public carrier order is canonical by identifier.
     pub fn new(
-        topology: Arc<FlowTopology>,
+        topology: Arc<FlowTopology<K>>,
         stock_axes: impl IntoIterator<Item = StockAxisDefinition>,
         channels: impl IntoIterator<Item = ChannelId>,
-        ledgers: impl IntoIterator<Item = LedgerDefinition>,
-    ) -> Result<Self, StockFlowError> {
+        ledgers: impl IntoIterator<Item = LedgerDefinition<K>>,
+    ) -> Result<Self, StockFlowError<K>> {
         let stock_axes = stock_axes.into_iter().collect::<Vec<_>>();
         if stock_axes.len() != topology.stocks().len() {
             return Err(StockFlowError::StockAxisCount {
@@ -610,8 +610,7 @@ impl StockFlowCarrier {
             }
             let kind = topology
                 .stock_kind_for(&definition.stock)
-                .expect("known topology stock has a kind")
-                .clone();
+                .expect("known topology stock has a kind");
             if rows.insert(definition.axis.clone(), kind).is_some() {
                 return Err(StockFlowError::DuplicateAxis(definition.axis));
             }
@@ -635,7 +634,7 @@ impl StockFlowCarrier {
         let mut boundaries = BTreeMap::new();
         let mut boundary_roles = BTreeMap::new();
         for (flow, channel) in topology.flows().iter().zip(&channels) {
-            let kind = topology.kinds()[flow.kind()].clone();
+            let kind = topology.kinds()[flow.kind()];
             match (flow.role(), channel) {
                 (FlowRole::Transfer, ChannelId::Internal(id)) => {
                     let column = InternalColumn {
@@ -670,11 +669,11 @@ impl StockFlowCarrier {
 
         let internal_kinds = internal
             .iter()
-            .map(|(id, column)| (id.clone(), column.kind.clone()))
+            .map(|(id, column)| (id.clone(), column.kind))
             .collect();
         let boundary_kinds = boundaries
             .iter()
-            .map(|(id, column)| (id.clone(), column.kind.clone()))
+            .map(|(id, column)| (id.clone(), column.kind))
             .collect();
         let internal_effects =
             ExactEffectMatrix::new(rows.clone(), internal_kinds, |axis, flow| {
@@ -696,7 +695,7 @@ impl StockFlowCarrier {
             }
         });
 
-        let known_kinds = topology.kinds().iter().cloned().collect::<BTreeSet<_>>();
+        let known_kinds = topology.kinds().iter().copied().collect::<BTreeSet<_>>();
         let mut ledger_map = BTreeMap::new();
         let mut used_axes = internal_effects.axes().cloned().collect::<BTreeSet<_>>();
         for ledger in ledgers {
@@ -720,7 +719,7 @@ impl StockFlowCarrier {
                         ledger: ledger.id,
                         boundary,
                         ledger_kind: ledger.kind,
-                        boundary_kind: column.kind.clone(),
+                        boundary_kind: column.kind,
                     });
                 }
                 if role
@@ -764,22 +763,22 @@ impl StockFlowCarrier {
     }
 
     /// Underlying immutable settlement topology.
-    pub fn topology(&self) -> &Arc<FlowTopology> {
+    pub fn topology(&self) -> &Arc<FlowTopology<K>> {
         &self.topology
     }
 
     /// Canonical exact identity retained by records and evidence.
-    pub fn identity(&self) -> &CarrierIdentity {
+    pub fn identity(&self) -> &CarrierIdentity<K> {
         &self.identity
     }
 
     /// Exact internal incidence matrix.
-    pub fn internal_effects(&self) -> &ExactEffectMatrix<FlowId> {
+    pub fn internal_effects(&self) -> &ExactEffectMatrix<FlowId, K> {
         &self.identity.internal
     }
 
     /// Exact boundary incidence matrix.
-    pub fn boundary_effects(&self) -> &ExactEffectMatrix<BoundaryId> {
+    pub fn boundary_effects(&self) -> &ExactEffectMatrix<BoundaryId, K> {
         &self.identity.boundary
     }
 
@@ -789,7 +788,7 @@ impl StockFlowCarrier {
     }
 
     /// Returns one ledger's projected axis and kind.
-    pub fn ledger(&self, ledger: &LedgerId) -> Option<&LedgerIdentity> {
+    pub fn ledger(&self, ledger: &LedgerId) -> Option<&LedgerIdentity<K>> {
         self.identity.ledgers.get(ledger)
     }
 
@@ -806,10 +805,10 @@ impl StockFlowCarrier {
         &self,
         before: &[BigRational],
         after: &[BigRational],
-        report: &CompiledSettlementReport<BigRational>,
-        ledger_before: ExactAmounts<LedgerId>,
-        ledger_after: ExactAmounts<LedgerId>,
-    ) -> Result<TransitionRecord, StockFlowError> {
+        report: &CompiledSettlementReport<BigRational, K>,
+        ledger_before: ExactAmounts<LedgerId, K>,
+        ledger_after: ExactAmounts<LedgerId, K>,
+    ) -> Result<TransitionRecord<K>, StockFlowError<K>> {
         self.topology.materialize_exact_report(report)?;
         for values in [before, after] {
             if values.len() != self.topology.stocks().len() {
@@ -828,8 +827,7 @@ impl StockFlowCarrier {
                         let kind = self
                             .topology
                             .stock_kind_for(stock)
-                            .expect("topology stock has a kind")
-                            .clone();
+                            .expect("topology stock has a kind");
                         (axis, kind, value.clone())
                     },
                 ))
@@ -846,13 +844,13 @@ impl StockFlowCarrier {
         {
             match slot {
                 ChannelId::Internal(flow) => {
-                    let kind = self.internal[flow].kind.clone();
-                    requested_internal.push((flow.clone(), kind.clone(), requested.clone()));
+                    let kind = self.internal[flow].kind;
+                    requested_internal.push((flow.clone(), kind, requested.clone()));
                     settled_internal.push((flow.clone(), kind, settled.clone()));
                 }
                 ChannelId::Boundary(boundary) => {
-                    let kind = self.boundaries[boundary].kind.clone();
-                    requested_boundary.push((boundary.clone(), kind.clone(), requested.clone()));
+                    let kind = self.boundaries[boundary].kind;
+                    requested_boundary.push((boundary.clone(), kind, requested.clone()));
                     settled_boundary.push((boundary.clone(), kind, settled.clone()));
                 }
             }
@@ -876,18 +874,18 @@ impl StockFlowCarrier {
 
 /// A complete, canonical vector of exact typed amounts.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ExactAmounts<I> {
-    values: BTreeMap<I, (KindId, BigRational)>,
+pub struct ExactAmounts<I, K> {
+    values: BTreeMap<I, (K, BigRational)>,
 }
 
-impl<I> ExactAmounts<I>
+impl<I, K: Kind> ExactAmounts<I, K>
 where
     I: Symbol,
 {
     /// Constructs an exact vector, rejecting duplicate entries.
     pub fn new(
-        values: impl IntoIterator<Item = (I, KindId, BigRational)>,
-    ) -> Result<Self, StockFlowError> {
+        values: impl IntoIterator<Item = (I, K, BigRational)>,
+    ) -> Result<Self, StockFlowError<K>> {
         let mut canonical = BTreeMap::new();
         for (id, kind, amount) in values {
             if canonical.insert(id.clone(), (kind, amount)).is_some() {
@@ -903,15 +901,15 @@ where
     }
 
     /// Returns one supplied kind when its symbol is present.
-    pub fn kind(&self, id: &I) -> Option<&KindId> {
-        self.values.get(id).map(|(kind, _)| kind)
+    pub fn kind(&self, id: &I) -> Option<K> {
+        self.values.get(id).map(|(kind, _)| *kind)
     }
 
     /// Iterates through values in canonical identifier order.
-    pub fn iter(&self) -> impl ExactSizeIterator<Item = (&I, &KindId, &BigRational)> {
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (&I, K, &BigRational)> {
         self.values
             .iter()
-            .map(|(id, (kind, amount))| (id, kind, amount))
+            .map(|(id, (kind, amount))| (id, *kind, amount))
     }
 
     /// Returns the number of named amounts.
@@ -927,38 +925,38 @@ where
 
 /// Unvalidated input data for one exact accepted transition.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TransitionRecordData {
+pub struct TransitionRecordData<K> {
     /// Stock state before settlement.
-    pub before: ExactAmounts<AxisId>,
+    pub before: ExactAmounts<AxisId, K>,
     /// Stock state after settlement.
-    pub after: ExactAmounts<AxisId>,
+    pub after: ExactAmounts<AxisId, K>,
     /// Requested internal-flow amounts.
-    pub requested_internal: ExactAmounts<FlowId>,
+    pub requested_internal: ExactAmounts<FlowId, K>,
     /// Settled internal-flow amounts.
-    pub settled_internal: ExactAmounts<FlowId>,
+    pub settled_internal: ExactAmounts<FlowId, K>,
     /// Requested boundary-flow amounts.
-    pub requested_boundary: ExactAmounts<BoundaryId>,
+    pub requested_boundary: ExactAmounts<BoundaryId, K>,
     /// Settled boundary-flow amounts.
-    pub settled_boundary: ExactAmounts<BoundaryId>,
+    pub settled_boundary: ExactAmounts<BoundaryId, K>,
     /// Cumulative ledgers before settlement.
-    pub ledger_before: ExactAmounts<LedgerId>,
+    pub ledger_before: ExactAmounts<LedgerId, K>,
     /// Cumulative ledgers after settlement.
-    pub ledger_after: ExactAmounts<LedgerId>,
+    pub ledger_after: ExactAmounts<LedgerId, K>,
 }
 
 /// One immutable, structurally valid exact accepted transition.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TransitionRecord {
-    carrier: CarrierIdentity,
-    data: TransitionRecordData,
+pub struct TransitionRecord<K> {
+    carrier: CarrierIdentity<K>,
+    data: TransitionRecordData<K>,
 }
 
-impl TransitionRecord {
+impl<K: Kind> TransitionRecord<K> {
     /// Validates a complete record against one exact carrier.
     pub fn new(
-        carrier: &StockFlowCarrier,
-        data: TransitionRecordData,
-    ) -> Result<Self, StockFlowError> {
+        carrier: &StockFlowCarrier<K>,
+        data: TransitionRecordData<K>,
+    ) -> Result<Self, StockFlowError<K>> {
         validate_values(
             &data.before,
             &carrier.identity.internal.rows,
@@ -993,7 +991,7 @@ impl TransitionRecord {
             .identity
             .ledgers
             .iter()
-            .map(|(id, ledger)| (id.clone(), ledger.kind.clone()))
+            .map(|(id, ledger)| (id.clone(), ledger.kind))
             .collect();
         validate_values(&data.ledger_before, &ledger_kinds, ValueRole::LedgerBefore)?;
         validate_values(&data.ledger_after, &ledger_kinds, ValueRole::LedgerAfter)?;
@@ -1011,72 +1009,72 @@ impl TransitionRecord {
     }
 
     /// Exact carrier identity under which this record was validated.
-    pub fn carrier_identity(&self) -> &CarrierIdentity {
+    pub fn carrier_identity(&self) -> &CarrierIdentity<K> {
         &self.carrier
     }
 
     /// Stock state before settlement.
-    pub fn before(&self) -> &ExactAmounts<AxisId> {
+    pub fn before(&self) -> &ExactAmounts<AxisId, K> {
         &self.data.before
     }
 
     /// Stock state after settlement.
-    pub fn after(&self) -> &ExactAmounts<AxisId> {
+    pub fn after(&self) -> &ExactAmounts<AxisId, K> {
         &self.data.after
     }
 
     /// Requested internal-flow amounts.
-    pub fn requested_internal(&self) -> &ExactAmounts<FlowId> {
+    pub fn requested_internal(&self) -> &ExactAmounts<FlowId, K> {
         &self.data.requested_internal
     }
 
     /// Settled internal-flow amounts.
-    pub fn settled_internal(&self) -> &ExactAmounts<FlowId> {
+    pub fn settled_internal(&self) -> &ExactAmounts<FlowId, K> {
         &self.data.settled_internal
     }
 
     /// Requested boundary-flow amounts.
-    pub fn requested_boundary(&self) -> &ExactAmounts<BoundaryId> {
+    pub fn requested_boundary(&self) -> &ExactAmounts<BoundaryId, K> {
         &self.data.requested_boundary
     }
 
     /// Settled boundary-flow amounts.
-    pub fn settled_boundary(&self) -> &ExactAmounts<BoundaryId> {
+    pub fn settled_boundary(&self) -> &ExactAmounts<BoundaryId, K> {
         &self.data.settled_boundary
     }
 
     /// Cumulative ledgers before settlement.
-    pub fn ledger_before(&self) -> &ExactAmounts<LedgerId> {
+    pub fn ledger_before(&self) -> &ExactAmounts<LedgerId, K> {
         &self.data.ledger_before
     }
 
     /// Cumulative ledgers after settlement.
-    pub fn ledger_after(&self) -> &ExactAmounts<LedgerId> {
+    pub fn ledger_after(&self) -> &ExactAmounts<LedgerId, K> {
         &self.data.ledger_after
     }
 
     /// Decomposes the record into rebuildable exact data.
-    pub fn into_data(self) -> TransitionRecordData {
+    pub fn into_data(self) -> TransitionRecordData<K> {
         self.data
     }
 }
 
 /// Immutable, structurally continuous finite exact transition trace.
 #[derive(Clone, Debug)]
-pub struct TransitionTrace {
-    carrier: Arc<StockFlowCarrier>,
-    records: Vec<TransitionRecord>,
+pub struct TransitionTrace<K> {
+    carrier: Arc<StockFlowCarrier<K>>,
+    records: Vec<TransitionRecord<K>>,
 }
 
-impl TransitionTrace {
+impl<K: Kind> TransitionTrace<K> {
     /// Validates record identity and exact before/after continuity.
     ///
     /// Empty traces are representable but semantic checkers reject them with a
     /// structural `TooShort` result rather than creating vacuous witnesses.
     pub fn new(
-        carrier: Arc<StockFlowCarrier>,
-        records: Vec<TransitionRecord>,
-    ) -> Result<Self, StockFlowError> {
+        carrier: Arc<StockFlowCarrier<K>>,
+        records: Vec<TransitionRecord<K>>,
+    ) -> Result<Self, StockFlowError<K>> {
         for record in &records {
             if record.carrier_identity() != carrier.identity() {
                 return Err(StockFlowError::CarrierMismatch);
@@ -1104,17 +1102,17 @@ impl TransitionTrace {
     }
 
     /// Exact carrier shared by all records.
-    pub fn carrier(&self) -> &Arc<StockFlowCarrier> {
+    pub fn carrier(&self) -> &Arc<StockFlowCarrier<K>> {
         &self.carrier
     }
 
     /// Accepted records in trace order.
-    pub fn records(&self) -> &[TransitionRecord] {
+    pub fn records(&self) -> &[TransitionRecord<K>] {
         &self.records
     }
 
     /// Projects stock and ledger states into the existing graded trace carrier.
-    pub fn graded_states(&self) -> Result<Vec<TraceState>, StockFlowError> {
+    pub fn graded_states(&self) -> Result<Vec<TraceState>, StockFlowError<K>> {
         let Some(first) = self.records.first() else {
             return Ok(Vec::new());
         };
@@ -1135,11 +1133,11 @@ impl TransitionTrace {
     }
 }
 
-fn validate_values<I>(
-    actual: &ExactAmounts<I>,
-    expected: &BTreeMap<I, KindId>,
+fn validate_values<I, K: Kind>(
+    actual: &ExactAmounts<I, K>,
+    expected: &BTreeMap<I, K>,
     role: ValueRole,
-) -> Result<(), StockFlowError>
+) -> Result<(), StockFlowError<K>>
 where
     I: Symbol,
 {
@@ -1160,18 +1158,18 @@ where
             return Err(StockFlowError::KindMismatch {
                 role,
                 symbol: id.symbol_id(),
-                expected: expected_kind.clone(),
-                actual: actual_kind.clone(),
+                expected: *expected_kind,
+                actual: *actual_kind,
             });
         }
     }
     Ok(())
 }
 
-fn validate_settlement<I>(
-    requested: &ExactAmounts<I>,
-    settled: &ExactAmounts<I>,
-) -> Result<(), StockFlowError>
+fn validate_settlement<I, K: Kind>(
+    requested: &ExactAmounts<I, K>,
+    settled: &ExactAmounts<I, K>,
+) -> Result<(), StockFlowError<K>>
 where
     I: Symbol,
 {
@@ -1190,11 +1188,11 @@ where
     Ok(())
 }
 
-fn project_state(
-    carrier: &StockFlowCarrier,
-    stocks: &ExactAmounts<AxisId>,
-    ledgers: &ExactAmounts<LedgerId>,
-) -> Result<TraceState, StockFlowError> {
+fn project_state<K: Kind>(
+    carrier: &StockFlowCarrier<K>,
+    stocks: &ExactAmounts<AxisId, K>,
+    ledgers: &ExactAmounts<LedgerId, K>,
+) -> Result<TraceState, StockFlowError<K>> {
     let values = stocks
         .iter()
         .map(|(axis, _, amount)| (axis.clone(), amount.clone()))
@@ -1207,7 +1205,7 @@ fn project_state(
     Ok(TraceState::new(values)?)
 }
 
-fn validate_nonnegative<I>(amounts: &ExactAmounts<I>) -> Result<(), StockFlowError>
+fn validate_nonnegative<I, K: Kind>(amounts: &ExactAmounts<I, K>) -> Result<(), StockFlowError<K>>
 where
     I: Symbol,
 {
@@ -1237,7 +1235,7 @@ impl TransitionEquation {
 
 /// Positive exact evidence for a transition equation.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TransitionWitness {
+pub struct TransitionWitness<K> {
     /// Sentence checked.
     pub sentence: SentenceId,
     /// Number of accepted transitions checked.
@@ -1247,7 +1245,7 @@ pub struct TransitionWitness {
     /// Exact residual shared by all checked coordinates.
     pub residual: BigRational,
     /// Exact carrier identity against which the witness was produced.
-    pub carrier: CarrierIdentity,
+    pub carrier: CarrierIdentity<K>,
 }
 
 /// First exact transition-equation failure.
@@ -1269,14 +1267,14 @@ pub struct TransitionViolation {
 
 /// Typed semantic outcome for a transition-equation sentence.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum TransitionVerdict {
+pub enum TransitionVerdict<K> {
     /// Every transition and axis satisfied the equation.
-    Satisfied(TransitionWitness),
+    Satisfied(TransitionWitness<K>),
     /// The first transition/axis mismatch.
     Violated(TransitionViolation),
 }
 
-impl TransitionVerdict {
+impl<K: Kind> TransitionVerdict<K> {
     /// Returns whether this verdict carries positive evidence.
     pub fn is_satisfied(&self) -> bool {
         matches!(self, Self::Satisfied(_))
@@ -1284,10 +1282,10 @@ impl TransitionVerdict {
 }
 
 /// Checks `after - before = S f + B b` exactly and axis-wise.
-pub fn check_transition_equation(
+pub fn check_transition_equation<K: Kind>(
     sentence: &TransitionEquation,
-    trace: &TransitionTrace,
-) -> Result<TransitionVerdict, StockFlowError> {
+    trace: &TransitionTrace<K>,
+) -> Result<TransitionVerdict<K>, StockFlowError<K>> {
     require_transitions(trace)?;
     let carrier = trace.carrier();
     for (transition, record) in trace.records.iter().enumerate() {
@@ -1335,22 +1333,22 @@ pub fn check_transition_equation(
 
 /// Named exact linear equation over settled internal-flow channels.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LinearFlowConstraint {
+pub struct LinearFlowConstraint<K> {
     id: SentenceId,
-    kind: KindId,
+    kind: K,
     coefficients: BTreeMap<FlowId, BigRational>,
     expected: BigRational,
 }
 
-impl LinearFlowConstraint {
+impl<K: Kind> LinearFlowConstraint<K> {
     /// Canonicalizes terms and validates every referenced channel against a carrier.
     pub fn new(
-        carrier: &StockFlowCarrier,
+        carrier: &StockFlowCarrier<K>,
         id: SentenceId,
-        kind: KindId,
+        kind: K,
         coefficients: impl IntoIterator<Item = (FlowId, BigRational)>,
         expected: BigRational,
-    ) -> Result<Self, StockFlowError> {
+    ) -> Result<Self, StockFlowError<K>> {
         let mut canonical = BTreeMap::<FlowId, BigRational>::new();
         for (flow, coefficient) in coefficients {
             *canonical.entry(flow).or_default() += coefficient;
@@ -1375,8 +1373,8 @@ impl LinearFlowConstraint {
     }
 
     /// Quantity kind shared by every term.
-    pub fn kind(&self) -> &KindId {
-        &self.kind
+    pub fn kind(&self) -> K {
+        self.kind
     }
 
     /// Canonical exact nonzero coefficients.
@@ -1390,17 +1388,17 @@ impl LinearFlowConstraint {
     }
 
     /// Validates every referenced channel against a carrier.
-    pub fn validate(&self, carrier: &StockFlowCarrier) -> Result<(), StockFlowError> {
+    pub fn validate(&self, carrier: &StockFlowCarrier<K>) -> Result<(), StockFlowError<K>> {
         for flow in self.coefficients.keys() {
             let Some(actual) = carrier.internal_effects().column_kind(flow) else {
                 return Err(StockFlowError::UnknownFlow(flow.clone()));
             };
-            if actual != &self.kind {
+            if actual != self.kind {
                 return Err(StockFlowError::SentenceKindMismatch {
                     sentence: self.id.clone(),
                     symbol: flow.symbol_id(),
-                    expected: self.kind.clone(),
-                    actual: actual.clone(),
+                    expected: self.kind,
+                    actual,
                 });
             }
         }
@@ -1449,10 +1447,10 @@ impl FlowConstraintVerdict {
 }
 
 /// Checks one exact linear flow constraint over every accepted transition.
-pub fn check_linear_flow_constraint(
-    sentence: &LinearFlowConstraint,
-    trace: &TransitionTrace,
-) -> Result<FlowConstraintVerdict, StockFlowError> {
+pub fn check_linear_flow_constraint<K: Kind>(
+    sentence: &LinearFlowConstraint<K>,
+    trace: &TransitionTrace<K>,
+) -> Result<FlowConstraintVerdict, StockFlowError<K>> {
     sentence.validate(trace.carrier())?;
     require_transitions(trace)?;
     for (transition, record) in trace.records.iter().enumerate() {
@@ -1503,10 +1501,10 @@ impl BoundaryCorrespondence {
     }
 
     /// Validates that the carrier declares the ledger and its mapped ports.
-    pub fn validate<'a>(
+    pub fn validate<'a, K: Kind>(
         &self,
-        carrier: &'a StockFlowCarrier,
-    ) -> Result<&'a LedgerIdentity, StockFlowError> {
+        carrier: &'a StockFlowCarrier<K>,
+    ) -> Result<&'a LedgerIdentity<K>, StockFlowError<K>> {
         carrier
             .ledger(&self.ledger)
             .ok_or_else(|| StockFlowError::UnknownLedger(self.ledger.clone()))
@@ -1564,10 +1562,10 @@ impl BoundaryVerdict {
 }
 
 /// Checks one carrier-authoritative ledger/port correspondence exactly.
-pub fn check_boundary_correspondence(
+pub fn check_boundary_correspondence<K: Kind>(
     sentence: &BoundaryCorrespondence,
-    trace: &TransitionTrace,
-) -> Result<BoundaryVerdict, StockFlowError> {
+    trace: &TransitionTrace<K>,
+) -> Result<BoundaryVerdict, StockFlowError<K>> {
     let ledger = sentence.validate(trace.carrier())?;
     require_transitions(trace)?;
     let boundaries = ledger.boundaries.iter().cloned().collect::<Vec<_>>();
@@ -1602,14 +1600,14 @@ pub fn check_boundary_correspondence(
 
 /// Named embedding of an existing graded state law.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct GradedStateLaw {
+pub struct GradedStateLaw<K> {
     id: SentenceId,
-    law: GradedLaw,
+    law: GradedLaw<K>,
 }
 
-impl GradedStateLaw {
+impl<K: Kind> GradedStateLaw<K> {
     /// Constructs a named graded state sentence without changing its semantics.
-    pub fn new(id: SentenceId, law: GradedLaw) -> Self {
+    pub fn new(id: SentenceId, law: GradedLaw<K>) -> Self {
         Self { id, law }
     }
 
@@ -1619,12 +1617,12 @@ impl GradedStateLaw {
     }
 
     /// Existing graded law carried unchanged.
-    pub fn law(&self) -> &GradedLaw {
+    pub fn law(&self) -> &GradedLaw<K> {
         &self.law
     }
 
     /// Validates every law axis and kind against stocks or projected ledgers.
-    pub fn validate(&self, carrier: &StockFlowCarrier) -> Result<(), StockFlowError> {
+    pub fn validate(&self, carrier: &StockFlowCarrier<K>) -> Result<(), StockFlowError<K>> {
         for (axis, _) in self.law.form().coefficients() {
             let actual = carrier
                 .internal_effects()
@@ -1635,15 +1633,15 @@ impl GradedStateLaw {
                         .ledgers
                         .values()
                         .find(|ledger| &ledger.axis == axis)
-                        .map(|ledger| &ledger.kind)
+                        .map(|ledger| ledger.kind)
                 })
                 .ok_or_else(|| StockFlowError::UnknownAxis(axis.clone()))?;
             if actual != self.law.form().kind() {
                 return Err(StockFlowError::SentenceKindMismatch {
                     sentence: self.id.clone(),
                     symbol: axis.symbol_id(),
-                    expected: self.law.form().kind().clone(),
-                    actual: actual.clone(),
+                    expected: self.law.form().kind(),
+                    actual,
                 });
             }
         }
@@ -1652,16 +1650,16 @@ impl GradedStateLaw {
 }
 
 /// Delegates an embedded graded sentence to the existing exact trace checker.
-pub fn check_graded_state_law(
-    sentence: &GradedStateLaw,
-    trace: &TransitionTrace,
-) -> Result<LawVerdict, StockFlowError> {
+pub fn check_graded_state_law<K: Kind>(
+    sentence: &GradedStateLaw<K>,
+    trace: &TransitionTrace<K>,
+) -> Result<LawVerdict<K>, StockFlowError<K>> {
     sentence.validate(trace.carrier())?;
     require_transitions(trace)?;
     Ok(check_law(sentence.law(), &trace.graded_states()?)?)
 }
 
-fn require_transitions(trace: &TransitionTrace) -> Result<(), StockFlowError> {
+fn require_transitions<K: Kind>(trace: &TransitionTrace<K>) -> Result<(), StockFlowError<K>> {
     if trace.records.is_empty() {
         Err(StockFlowError::TooShort { transitions: 0 })
     } else {
@@ -1671,22 +1669,22 @@ fn require_transitions(trace: &TransitionTrace) -> Result<(), StockFlowError> {
 
 /// Sealed exact evidence that one typed coefficient vector annihilates `S`.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CheckedNullspace {
-    carrier: CarrierIdentity,
-    law: BalanceLaw,
+pub struct CheckedNullspace<K> {
+    carrier: CarrierIdentity<K>,
+    law: BalanceLaw<K>,
     source: NullspaceSource,
     annihilation: BTreeMap<FlowId, BigRational>,
     boundary_coefficients: BTreeMap<BoundaryId, BigRational>,
 }
 
-impl CheckedNullspace {
+impl<K: Kind> CheckedNullspace<K> {
     /// Exact carrier identity under which this evidence was certified.
-    pub fn carrier_identity(&self) -> &CarrierIdentity {
+    pub fn carrier_identity(&self) -> &CarrierIdentity<K> {
         &self.carrier
     }
 
     /// Checked canonical linear form.
-    pub fn law(&self) -> &BalanceLaw {
+    pub fn law(&self) -> &BalanceLaw<K> {
         &self.law
     }
 
@@ -1706,7 +1704,7 @@ impl CheckedNullspace {
     }
 
     /// Derives a named direct open-balance sentence.
-    pub fn open_balance(&self, id: SentenceId) -> OpenBalance {
+    pub fn open_balance(&self, id: SentenceId) -> OpenBalance<K> {
         OpenBalance {
             id,
             certificate: self.clone(),
@@ -1720,9 +1718,9 @@ impl CheckedNullspace {
     /// must have the same coefficient.
     pub fn graded_invariant(
         &self,
-        carrier: &StockFlowCarrier,
+        carrier: &StockFlowCarrier<K>,
         selected_ledgers: impl IntoIterator<Item = LedgerId>,
-    ) -> Result<GradedLaw, StockFlowError> {
+    ) -> Result<GradedLaw<K>, StockFlowError<K>> {
         if &self.carrier != carrier.identity() {
             return Err(StockFlowError::CarrierMismatch);
         }
@@ -1763,7 +1761,7 @@ impl CheckedNullspace {
             }
         }
         Ok(GradedLaw::from(BalanceLaw::new(
-            self.law.kind().clone(),
+            self.law.kind(),
             coefficients,
             self.source.provenance(),
         )?))
@@ -1771,24 +1769,24 @@ impl CheckedNullspace {
 }
 
 /// Recomputes and seals one exact structural left-nullspace certificate.
-pub fn certify_nullspace(
-    carrier: &StockFlowCarrier,
-    kind: KindId,
+pub fn certify_nullspace<K: Kind>(
+    carrier: &StockFlowCarrier<K>,
+    kind: K,
     coefficients: impl IntoIterator<Item = (AxisId, BigRational)>,
-) -> Result<CheckedNullspace, StockFlowError> {
+) -> Result<CheckedNullspace<K>, StockFlowError<K>> {
     let source = NullspaceSource::Incidence;
     let coefficients = coefficients.into_iter().collect::<Vec<_>>();
     for (axis, _) in &coefficients {
         let Some(actual) = carrier.internal_effects().axis_kind(axis) else {
             return Err(StockFlowError::UnknownAxis(axis.clone()));
         };
-        if actual != &kind {
+        if actual != kind {
             return Err(StockFlowError::SentenceKindMismatch {
                 sentence: SentenceId::new("nullspace-certificate")
                     .expect("static certificate identifier is nonblank"),
                 symbol: axis.symbol_id(),
-                expected: kind.clone(),
-                actual: actual.clone(),
+                expected: kind,
+                actual,
             });
         }
     }
@@ -1840,14 +1838,14 @@ pub fn certify_nullspace(
 }
 
 /// Derives and seals a deterministic exact basis for one carrier kind.
-pub fn derive_nullspace_basis(
-    carrier: &StockFlowCarrier,
-    kind: KindId,
-) -> Result<Vec<CheckedNullspace>, StockFlowError> {
+pub fn derive_nullspace_basis<K: Kind>(
+    carrier: &StockFlowCarrier<K>,
+    kind: K,
+) -> Result<Vec<CheckedNullspace<K>>, StockFlowError<K>> {
     let axes = carrier
         .internal_effects()
         .axes()
-        .filter(|axis| carrier.internal_effects().axis_kind(axis) == Some(&kind))
+        .filter(|axis| carrier.internal_effects().axis_kind(axis) == Some(kind))
         .cloned()
         .collect::<Vec<_>>();
     if axes.is_empty() {
@@ -1856,7 +1854,7 @@ pub fn derive_nullspace_basis(
     let flows = carrier
         .internal_effects()
         .columns()
-        .filter(|flow| carrier.internal_effects().column_kind(flow) == Some(&kind))
+        .filter(|flow| carrier.internal_effects().column_kind(flow) == Some(kind))
         .cloned()
         .collect::<Vec<_>>();
     let matrix = if flows.is_empty() {
@@ -1879,12 +1877,12 @@ pub fn derive_nullspace_basis(
             .collect();
         TransitionMatrix::new(axes, rows)?
     };
-    derive_left_nullspace(&matrix, kind.clone(), NullspaceSource::Incidence)?
+    derive_left_nullspace(&matrix, kind, NullspaceSource::Incidence)?
         .into_iter()
         .map(|law| {
             certify_nullspace(
                 carrier,
-                kind.clone(),
+                kind,
                 law.coefficients()
                     .map(|(axis, coefficient)| (axis.clone(), coefficient.clone())),
             )
@@ -1894,32 +1892,32 @@ pub fn derive_nullspace_basis(
 
 /// Named direct open-balance sentence derived from checked `w^T S = 0`.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OpenBalance {
+pub struct OpenBalance<K> {
     id: SentenceId,
-    certificate: CheckedNullspace,
+    certificate: CheckedNullspace<K>,
 }
 
-impl OpenBalance {
+impl<K: Kind> OpenBalance<K> {
     /// Stable sentence identifier.
     pub fn id(&self) -> &SentenceId {
         &self.id
     }
 
     /// Sealed derivation evidence authorizing this sentence.
-    pub fn certificate(&self) -> &CheckedNullspace {
+    pub fn certificate(&self) -> &CheckedNullspace<K> {
         &self.certificate
     }
 }
 
 /// Positive exact evidence for a derived direct open balance.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OpenBalanceWitness {
+pub struct OpenBalanceWitness<K> {
     /// Sentence checked.
     pub sentence: SentenceId,
     /// Number of transitions checked.
     pub transitions_checked: usize,
     /// Exact derivation certificate kept separate from runtime evidence.
-    pub certificate: CheckedNullspace,
+    pub certificate: CheckedNullspace<K>,
 }
 
 /// First exact direct open-balance failure.
@@ -1939,14 +1937,14 @@ pub struct OpenBalanceViolation {
 
 /// Typed semantic outcome for a derived direct open balance.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum OpenBalanceVerdict {
+pub enum OpenBalanceVerdict<K> {
     /// Every transition satisfied the derived balance.
-    Satisfied(OpenBalanceWitness),
+    Satisfied(OpenBalanceWitness<K>),
     /// The first mismatching transition.
     Violated(OpenBalanceViolation),
 }
 
-impl OpenBalanceVerdict {
+impl<K: Kind> OpenBalanceVerdict<K> {
     /// Returns whether this verdict carries positive evidence.
     pub fn is_satisfied(&self) -> bool {
         matches!(self, Self::Satisfied(_))
@@ -1954,10 +1952,10 @@ impl OpenBalanceVerdict {
 }
 
 /// Checks a certificate-derived direct open balance on one exact trace.
-pub fn check_open_balance(
-    sentence: &OpenBalance,
-    trace: &TransitionTrace,
-) -> Result<OpenBalanceVerdict, StockFlowError> {
+pub fn check_open_balance<K: Kind>(
+    sentence: &OpenBalance<K>,
+    trace: &TransitionTrace<K>,
+) -> Result<OpenBalanceVerdict<K>, StockFlowError<K>> {
     if &sentence.certificate.carrier != trace.carrier.identity() {
         return Err(StockFlowError::CarrierMismatch);
     }
@@ -2000,25 +1998,25 @@ pub fn check_open_balance(
 
 /// Complete typed outcome for one named sentence in a carrier-layer suite.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum SuiteVerdict {
+pub enum SuiteVerdict<K> {
     /// Transition-equation outcome.
-    Transition(TransitionVerdict),
+    Transition(TransitionVerdict<K>),
     /// Linear flow-constraint outcome.
     FlowConstraint(FlowConstraintVerdict),
     /// Boundary-correspondence outcome.
     Boundary(BoundaryVerdict),
     /// Certificate-derived direct open-balance outcome.
-    OpenBalance(OpenBalanceVerdict),
+    OpenBalance(OpenBalanceVerdict<K>),
     /// Existing graded-state outcome.
     Graded {
         /// Stable sentence identifier retained beside existing evidence.
         sentence: SentenceId,
         /// Existing typed graded verdict.
-        verdict: LawVerdict,
+        verdict: LawVerdict<K>,
     },
 }
 
-impl SuiteVerdict {
+impl<K: Kind> SuiteVerdict<K> {
     /// Stable sentence identifier for this complete typed outcome.
     pub fn id(&self) -> &SentenceId {
         match self {
@@ -2048,23 +2046,23 @@ impl SuiteVerdict {
 
 /// Canonical carrier-layer law suite retaining every named typed verdict.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StockFlowLawSuite {
+pub struct StockFlowLawSuite<K> {
     transition: Option<TransitionEquation>,
-    constraints: BTreeMap<SentenceId, LinearFlowConstraint>,
+    constraints: BTreeMap<SentenceId, LinearFlowConstraint<K>>,
     boundaries: BTreeMap<SentenceId, BoundaryCorrespondence>,
-    open_balances: BTreeMap<SentenceId, OpenBalance>,
-    graded: BTreeMap<SentenceId, GradedStateLaw>,
+    open_balances: BTreeMap<SentenceId, OpenBalance<K>>,
+    graded: BTreeMap<SentenceId, GradedStateLaw<K>>,
 }
 
-impl StockFlowLawSuite {
+impl<K: Kind> StockFlowLawSuite<K> {
     /// Constructs a suite and rejects duplicate names across all families.
     pub fn new(
         transition: Option<TransitionEquation>,
-        constraints: impl IntoIterator<Item = LinearFlowConstraint>,
+        constraints: impl IntoIterator<Item = LinearFlowConstraint<K>>,
         boundaries: impl IntoIterator<Item = BoundaryCorrespondence>,
-        open_balances: impl IntoIterator<Item = OpenBalance>,
-        graded: impl IntoIterator<Item = GradedStateLaw>,
-    ) -> Result<Self, StockFlowError> {
+        open_balances: impl IntoIterator<Item = OpenBalance<K>>,
+        graded: impl IntoIterator<Item = GradedStateLaw<K>>,
+    ) -> Result<Self, StockFlowError<K>> {
         let mut names = BTreeSet::new();
         if let Some(sentence) = &transition {
             names.insert(sentence.id.clone());
@@ -2083,7 +2081,10 @@ impl StockFlowLawSuite {
     }
 
     /// Checks every sentence and returns every typed outcome in name order.
-    pub fn check(&self, trace: &TransitionTrace) -> Result<Vec<SuiteVerdict>, StockFlowError> {
+    pub fn check(
+        &self,
+        trace: &TransitionTrace<K>,
+    ) -> Result<Vec<SuiteVerdict<K>>, StockFlowError<K>> {
         let mut verdicts = Vec::with_capacity(
             usize::from(self.transition.is_some())
                 + self.constraints.len()
@@ -2134,11 +2135,11 @@ impl StockFlowLawSuite {
     }
 }
 
-fn collect_named<T>(
+fn collect_named<T, K: Kind>(
     values: impl IntoIterator<Item = T>,
     names: &mut BTreeSet<SentenceId>,
     id: impl Fn(&T) -> &SentenceId,
-) -> Result<BTreeMap<SentenceId, T>, StockFlowError> {
+) -> Result<BTreeMap<SentenceId, T>, StockFlowError<K>> {
     let mut collected = BTreeMap::new();
     for value in values {
         let sentence = id(&value).clone();

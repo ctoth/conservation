@@ -4,7 +4,7 @@ Exact conservation-law derivation and trace evidence for typed quantitative syst
 
 This Cargo workspace contains the following library crates:
 
-- `conservation-core` defines validated typed axis and kind identifiers, exact
+- `conservation-core` defines validated typed axis identifiers, the kind trait, exact
   rational balance laws, and origin metadata tags. Origin metadata records how
   a law is asserted to have arisen; it is not a correctness certificate.
 - `conservation-linear` derives deterministic left-nullspace bases from integer

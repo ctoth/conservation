@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
-use conservation_core::{AxisId, BalanceLaw, Grade, GradedLaw, KindId};
+use conservation_core::{AxisId, BalanceLaw, Grade, GradedLaw, Kind};
 use num_rational::BigRational;
 use num_traits::{Signed, Zero};
 
@@ -69,13 +69,13 @@ impl TraceState {
 /// This evidence concerns only the supplied trace. It deliberately carries no
 /// derivation-origin metadata from the law.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TraceWitness {
+pub struct TraceWitness<K> {
     /// Number of states checked, always at least two.
     pub states_checked: usize,
     /// Exact balance shared by every checked state.
     pub conserved_value: BigRational,
     /// Kind checked by the law.
-    pub kind: KindId,
+    pub kind: K,
 }
 
 /// Semantic evidence that a structurally valid trace violates a balance law.
@@ -91,9 +91,9 @@ pub struct ViolatedBalance {
 
 /// The semantic outcome of checking a structurally valid trace.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum TraceVerdict {
+pub enum TraceVerdict<K> {
     /// Every state has the same exact balance.
-    Satisfied(TraceWitness),
+    Satisfied(TraceWitness<K>),
     /// A state has a different exact balance.
     Violated(ViolatedBalance),
 }
@@ -129,7 +129,10 @@ impl fmt::Display for TraceError {
 impl Error for TraceError {}
 
 /// Checks a finite trace against a law using exact rational arithmetic.
-pub fn check_trace(law: &BalanceLaw, states: &[TraceState]) -> Result<TraceVerdict, TraceError> {
+pub fn check_trace<K: Kind>(
+    law: &BalanceLaw<K>,
+    states: &[TraceState],
+) -> Result<TraceVerdict<K>, TraceError> {
     if states.len() < 2 {
         return Err(TraceError::TooShort {
             states: states.len(),
@@ -151,24 +154,24 @@ pub fn check_trace(law: &BalanceLaw, states: &[TraceState]) -> Result<TraceVerdi
     Ok(TraceVerdict::Satisfied(TraceWitness {
         states_checked: states.len(),
         conserved_value: expected,
-        kind: law.kind().clone(),
+        kind: law.kind(),
     }))
 }
 
 /// Positive evidence that a form stayed nonnegative at every checked state.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct NonnegativeWitness {
+pub struct NonnegativeWitness<K> {
     /// Number of states checked, always at least two.
     pub states_checked: usize,
     /// Smallest exact form value observed, which is at least zero.
     pub minimum: BigRational,
     /// Kind checked by the law.
-    pub kind: KindId,
+    pub kind: K,
 }
 
 /// Positive evidence that a form never decreased between consecutive states.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct NondecreasingWitness {
+pub struct NondecreasingWitness<K> {
     /// Number of states checked, always at least two.
     pub states_checked: usize,
     /// Exact form value at the initial state.
@@ -176,18 +179,18 @@ pub struct NondecreasingWitness {
     /// Exact form value at the final state, at least `initial`.
     pub last: BigRational,
     /// Kind checked by the law.
-    pub kind: KindId,
+    pub kind: K,
 }
 
 /// Positive evidence that a structurally valid trace satisfies a graded law.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum LawWitness {
+pub enum LawWitness<K> {
     /// Every state has the same exact form value.
-    Invariant(TraceWitness),
+    Invariant(TraceWitness<K>),
     /// Every state's form value is at least zero.
-    Nonnegative(NonnegativeWitness),
+    Nonnegative(NonnegativeWitness<K>),
     /// No consecutive pair of states decreases the form value.
-    Nondecreasing(NondecreasingWitness),
+    Nondecreasing(NondecreasingWitness<K>),
 }
 
 /// Semantic evidence that a structurally valid trace violates a graded law.
@@ -215,9 +218,9 @@ pub enum LawViolation {
 
 /// The semantic outcome of checking a structurally valid trace against a graded law.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum LawVerdict {
+pub enum LawVerdict<K> {
     /// The trace satisfies the law under its grade.
-    Satisfied(LawWitness),
+    Satisfied(LawWitness<K>),
     /// The trace violates the law under its grade.
     Violated(LawViolation),
 }
@@ -227,7 +230,10 @@ pub enum LawVerdict {
 /// All grades share [`check_trace`]'s structural contract: at least two states,
 /// and every state carries every law axis. The first offending state is
 /// reported for every grade.
-pub fn check_law(law: &GradedLaw, states: &[TraceState]) -> Result<LawVerdict, TraceError> {
+pub fn check_law<K: Kind>(
+    law: &GradedLaw<K>,
+    states: &[TraceState],
+) -> Result<LawVerdict<K>, TraceError> {
     if states.len() < 2 {
         return Err(TraceError::TooShort {
             states: states.len(),
@@ -248,7 +254,10 @@ pub fn check_law(law: &GradedLaw, states: &[TraceState]) -> Result<LawVerdict, T
     }
 }
 
-fn check_nonnegative(form: &BalanceLaw, states: &[TraceState]) -> Result<LawVerdict, TraceError> {
+fn check_nonnegative<K: Kind>(
+    form: &BalanceLaw<K>,
+    states: &[TraceState],
+) -> Result<LawVerdict<K>, TraceError> {
     let mut minimum = evaluate(form, &states[0], 0)?;
     if minimum.is_negative() {
         return Ok(LawVerdict::Violated(LawViolation::Negative {
@@ -272,12 +281,15 @@ fn check_nonnegative(form: &BalanceLaw, states: &[TraceState]) -> Result<LawVerd
         NonnegativeWitness {
             states_checked: states.len(),
             minimum,
-            kind: form.kind().clone(),
+            kind: form.kind(),
         },
     )))
 }
 
-fn check_nondecreasing(form: &BalanceLaw, states: &[TraceState]) -> Result<LawVerdict, TraceError> {
+fn check_nondecreasing<K: Kind>(
+    form: &BalanceLaw<K>,
+    states: &[TraceState],
+) -> Result<LawVerdict<K>, TraceError> {
     let initial = evaluate(form, &states[0], 0)?;
     let mut previous = initial.clone();
     for (state_index, state) in states.iter().enumerate().skip(1) {
@@ -296,13 +308,13 @@ fn check_nondecreasing(form: &BalanceLaw, states: &[TraceState]) -> Result<LawVe
             states_checked: states.len(),
             initial,
             last: previous,
-            kind: form.kind().clone(),
+            kind: form.kind(),
         },
     )))
 }
 
-fn evaluate(
-    law: &BalanceLaw,
+fn evaluate<K: Kind>(
+    law: &BalanceLaw<K>,
     state: &TraceState,
     state_index: usize,
 ) -> Result<BigRational, TraceError> {

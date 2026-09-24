@@ -119,32 +119,6 @@ impl fmt::Display for AxisId {
     }
 }
 
-/// Identifies the physical or logical kind measured by a law.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct KindId(String);
-
-impl KindId {
-    /// Creates a kind identifier.
-    pub fn new(value: impl Into<String>) -> Result<Self, IdentifierError> {
-        let value = value.into();
-        if value.trim().is_empty() {
-            return Err(IdentifierError::Blank);
-        }
-        Ok(Self(value))
-    }
-
-    /// Returns the identifier text.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for KindId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(formatter)
-    }
-}
-
 /// Records an asserted origin for a conservation law.
 ///
 /// This is metadata, not a certificate that the law was correctly derived or
@@ -166,8 +140,8 @@ pub enum Provenance {
 
 /// A canonical exact linear balance law over named axes.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct BalanceLaw {
-    kind: KindId,
+pub struct BalanceLaw<K> {
+    kind: K,
     coefficients: BTreeMap<AxisId, BigRational>,
     provenance: Provenance,
 }
@@ -189,10 +163,10 @@ impl fmt::Display for BalanceLawError {
 
 impl Error for BalanceLawError {}
 
-impl BalanceLaw {
+impl<K: Kind> BalanceLaw<K> {
     /// Constructs a law, combining repeated axes and discarding exact zero terms.
     pub fn new(
-        kind: KindId,
+        kind: K,
         coefficients: impl IntoIterator<Item = (AxisId, BigRational)>,
         provenance: Provenance,
     ) -> Result<Self, BalanceLawError> {
@@ -214,8 +188,8 @@ impl BalanceLaw {
     }
 
     /// Returns the kind conserved by this law.
-    pub fn kind(&self) -> &KindId {
-        &self.kind
+    pub fn kind(&self) -> K {
+        self.kind
     }
 
     /// Returns an axis coefficient, or exact zero when the axis is absent.
@@ -266,19 +240,19 @@ impl fmt::Display for Grade {
 /// authority constraints are [`Grade::Nonnegative`] sentences, and monotone
 /// dissipation axes are [`Grade::Nondecreasing`] sentences.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct GradedLaw {
-    form: BalanceLaw,
+pub struct GradedLaw<K> {
+    form: BalanceLaw<K>,
     grade: Grade,
 }
 
-impl GradedLaw {
+impl<K: Kind> GradedLaw<K> {
     /// Constructs a graded sentence over an already-canonical form.
-    pub fn new(form: BalanceLaw, grade: Grade) -> Self {
+    pub fn new(form: BalanceLaw<K>, grade: Grade) -> Self {
         Self { form, grade }
     }
 
     /// Returns the exact linear form this sentence reads.
-    pub fn form(&self) -> &BalanceLaw {
+    pub fn form(&self) -> &BalanceLaw<K> {
         &self.form
     }
 
@@ -288,9 +262,9 @@ impl GradedLaw {
     }
 }
 
-impl From<BalanceLaw> for GradedLaw {
+impl<K: Kind> From<BalanceLaw<K>> for GradedLaw<K> {
     /// Reads a balance law under its classic grade, [`Grade::Invariant`].
-    fn from(form: BalanceLaw) -> Self {
+    fn from(form: BalanceLaw<K>) -> Self {
         Self::new(form, Grade::Invariant)
     }
 }

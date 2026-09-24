@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use conservation_core::{AxisId, BalanceLaw, Grade, GradedLaw, KindId, Provenance};
+use conservation_core::{AxisId, BalanceLaw, Grade, GradedLaw, Provenance};
 use conservation_dynamics::{
     ExactState, FlowSpec, FlowTopology, ProcessId, StockDefinition, StockId,
 };
@@ -13,6 +13,7 @@ use conservation_stock_flow::{
     check_boundary_correspondence, check_graded_state_law, check_linear_flow_constraint,
     check_open_balance, check_transition_equation, derive_nullspace_basis,
 };
+use conservation_test_kinds::TestKind;
 use conservation_trace::{LawVerdict, LawViolation};
 use num_bigint::BigInt;
 use num_rational::BigRational;
@@ -20,10 +21,6 @@ use proptest::prelude::*;
 
 fn q(value: i64) -> BigRational {
     BigRational::from_integer(BigInt::from(value))
-}
-
-fn kind() -> KindId {
-    KindId::new("material").unwrap()
 }
 
 fn stock(value: &str) -> StockId {
@@ -50,31 +47,31 @@ fn sentence(value: &str) -> SentenceId {
     SentenceId::new(value).unwrap()
 }
 
-fn topology(reordered: bool) -> Arc<FlowTopology> {
-    let material = kind();
+fn topology(reordered: bool) -> Arc<FlowTopology<TestKind>> {
+    let material = TestKind::Material;
     let a = StockDefinition {
         id: stock("A"),
-        kind: material.clone(),
+        kind: material,
     };
     let b = StockDefinition {
         id: stock("B"),
-        kind: material.clone(),
+        kind: material,
     };
     let f1 = FlowSpec {
         process: ProcessId::new("transfer-1").unwrap(),
-        kind: material.clone(),
+        kind: material,
         source: Some(stock("A")),
         target: Some(stock("B")),
     };
     let f2 = FlowSpec {
         process: ProcessId::new("transfer-2").unwrap(),
-        kind: material.clone(),
+        kind: material,
         source: Some(stock("A")),
         target: Some(stock("B")),
     };
     let input = FlowSpec {
         process: ProcessId::new("input").unwrap(),
-        kind: material.clone(),
+        kind: material,
         source: None,
         target: Some(stock("A")),
     };
@@ -92,7 +89,7 @@ fn topology(reordered: bool) -> Arc<FlowTopology> {
     Arc::new(FlowTopology::new(stocks, flows).unwrap())
 }
 
-fn carrier(reordered: bool) -> Arc<StockFlowCarrier> {
+fn carrier(reordered: bool) -> Arc<StockFlowCarrier<TestKind>> {
     let channels = if reordered {
         vec![
             ChannelId::Boundary(boundary("out")),
@@ -126,13 +123,13 @@ fn carrier(reordered: bool) -> Arc<StockFlowCarrier> {
                 LedgerDefinition {
                     id: ledger("input-ledger"),
                     axis: axis("cumulative-input"),
-                    kind: kind(),
+                    kind: TestKind::Material,
                     boundaries: vec![boundary("in")],
                 },
                 LedgerDefinition {
                     id: ledger("output-ledger"),
                     axis: axis("cumulative-output"),
-                    kind: kind(),
+                    kind: TestKind::Material,
                     boundaries: vec![boundary("out")],
                 },
             ],
@@ -141,31 +138,39 @@ fn carrier(reordered: bool) -> Arc<StockFlowCarrier> {
     )
 }
 
-fn stocks(a: i64, b: i64) -> ExactAmounts<AxisId> {
-    ExactAmounts::new([(axis("A"), kind(), q(a)), (axis("B"), kind(), q(b))]).unwrap()
-}
-
-fn internals(f1: i64, f2: i64) -> ExactAmounts<FlowId> {
-    ExactAmounts::new([(flow("f1"), kind(), q(f1)), (flow("f2"), kind(), q(f2))]).unwrap()
-}
-
-fn boundaries(input: i64, output: i64) -> ExactAmounts<BoundaryId> {
+fn stocks(a: i64, b: i64) -> ExactAmounts<AxisId, TestKind> {
     ExactAmounts::new([
-        (boundary("in"), kind(), q(input)),
-        (boundary("out"), kind(), q(output)),
+        (axis("A"), TestKind::Material, q(a)),
+        (axis("B"), TestKind::Material, q(b)),
     ])
     .unwrap()
 }
 
-fn ledgers(input: i64, output: i64) -> ExactAmounts<LedgerId> {
+fn internals(f1: i64, f2: i64) -> ExactAmounts<FlowId, TestKind> {
     ExactAmounts::new([
-        (ledger("input-ledger"), kind(), q(input)),
-        (ledger("output-ledger"), kind(), q(output)),
+        (flow("f1"), TestKind::Material, q(f1)),
+        (flow("f2"), TestKind::Material, q(f2)),
     ])
     .unwrap()
 }
 
-fn record_data(before: [i64; 2], after: [i64; 2]) -> TransitionRecordData {
+fn boundaries(input: i64, output: i64) -> ExactAmounts<BoundaryId, TestKind> {
+    ExactAmounts::new([
+        (boundary("in"), TestKind::Material, q(input)),
+        (boundary("out"), TestKind::Material, q(output)),
+    ])
+    .unwrap()
+}
+
+fn ledgers(input: i64, output: i64) -> ExactAmounts<LedgerId, TestKind> {
+    ExactAmounts::new([
+        (ledger("input-ledger"), TestKind::Material, q(input)),
+        (ledger("output-ledger"), TestKind::Material, q(output)),
+    ])
+    .unwrap()
+}
+
+fn record_data(before: [i64; 2], after: [i64; 2]) -> TransitionRecordData<TestKind> {
     TransitionRecordData {
         before: stocks(before[0], before[1]),
         after: stocks(after[0], after[1]),
@@ -178,7 +183,7 @@ fn record_data(before: [i64; 2], after: [i64; 2]) -> TransitionRecordData {
     }
 }
 
-fn trace_with(after: [i64; 2]) -> TransitionTrace {
+fn trace_with(after: [i64; 2]) -> TransitionTrace<TestKind> {
     let carrier = carrier(false);
     let record = TransitionRecord::new(&carrier, record_data([10, 0], after)).unwrap();
     TransitionTrace::new(carrier, vec![record]).unwrap()
@@ -267,8 +272,11 @@ fn signed_observations_are_models_but_negative_flows_are_structural_errors() {
     assert!(TransitionRecord::new(&carrier, signed).is_ok());
 
     let mut negative = record_data([10, 0], [10, 3]);
-    negative.requested_internal =
-        ExactAmounts::new([(flow("f1"), kind(), q(-1)), (flow("f2"), kind(), q(1))]).unwrap();
+    negative.requested_internal = ExactAmounts::new([
+        (flow("f1"), TestKind::Material, q(-1)),
+        (flow("f2"), TestKind::Material, q(1)),
+    ])
+    .unwrap();
     assert_eq!(
         TransitionRecord::new(&carrier, negative),
         Err(StockFlowError::NegativeAmount(
@@ -281,7 +289,7 @@ fn signed_observations_are_models_but_negative_flows_are_structural_errors() {
 fn records_reject_missing_extra_wrong_kind_and_over_settled_values() {
     let carrier = carrier(false);
     let mut missing = record_data([10, 0], [10, 3]);
-    missing.before = ExactAmounts::new([(axis("A"), kind(), q(10))]).unwrap();
+    missing.before = ExactAmounts::new([(axis("A"), TestKind::Material, q(10))]).unwrap();
     assert!(matches!(
         TransitionRecord::new(&carrier, missing),
         Err(StockFlowError::MissingValue { .. })
@@ -289,9 +297,9 @@ fn records_reject_missing_extra_wrong_kind_and_over_settled_values() {
 
     let mut extra = record_data([10, 0], [10, 3]);
     extra.before = ExactAmounts::new([
-        (axis("A"), kind(), q(10)),
-        (axis("B"), kind(), q(0)),
-        (axis("C"), kind(), q(0)),
+        (axis("A"), TestKind::Material, q(10)),
+        (axis("B"), TestKind::Material, q(0)),
+        (axis("C"), TestKind::Material, q(0)),
     ])
     .unwrap();
     assert!(matches!(
@@ -301,8 +309,8 @@ fn records_reject_missing_extra_wrong_kind_and_over_settled_values() {
 
     let mut wrong_kind = record_data([10, 0], [10, 3]);
     wrong_kind.before = ExactAmounts::new([
-        (axis("A"), KindId::new("energy").unwrap(), q(10)),
-        (axis("B"), kind(), q(0)),
+        (axis("A"), TestKind::Energy, q(10)),
+        (axis("B"), TestKind::Material, q(0)),
     ])
     .unwrap();
     assert!(matches!(
@@ -394,7 +402,7 @@ fn flow_and_boundary_checkers_return_typed_first_offense_evidence() {
     let ratio = LinearFlowConstraint::new(
         good.carrier(),
         sentence("partition"),
-        kind(),
+        TestKind::Material,
         [(flow("f1"), q(1)), (flow("f2"), q(-2))],
         q(0),
     )
@@ -497,7 +505,12 @@ fn signed_projection_reuses_existing_graded_false_semantics() {
     let record = TransitionRecord::new(&carrier, data).unwrap();
     let trace = TransitionTrace::new(carrier, vec![record]).unwrap();
     let law = GradedLaw::new(
-        BalanceLaw::new(kind(), [(axis("A"), q(1))], Provenance::Declared).unwrap(),
+        BalanceLaw::new(
+            TestKind::Material,
+            [(axis("A"), q(1))],
+            Provenance::Declared,
+        )
+        .unwrap(),
         Grade::Nonnegative,
     );
     let verdict =
@@ -512,16 +525,24 @@ fn signed_projection_reuses_existing_graded_false_semantics() {
 fn checked_certificates_recompute_nullspace_and_seal_incidence_provenance() {
     let carrier = carrier(false);
     assert!(matches!(
-        certify_nullspace(&carrier, kind(), [(axis("A"), q(1))],),
+        certify_nullspace(&carrier, TestKind::Material, [(axis("A"), q(1))],),
         Err(StockFlowError::NonNullCertificate { .. })
     ));
     assert!(matches!(
-        certify_nullspace(&carrier, kind(), [(axis("A"), q(1)), (axis("A"), q(-1))],),
+        certify_nullspace(
+            &carrier,
+            TestKind::Material,
+            [(axis("A"), q(1)), (axis("A"), q(-1))],
+        ),
         Err(StockFlowError::BalanceLaw(_))
     ));
 
-    let incidence =
-        certify_nullspace(&carrier, kind(), [(axis("A"), q(1)), (axis("B"), q(1))]).unwrap();
+    let incidence = certify_nullspace(
+        &carrier,
+        TestKind::Material,
+        [(axis("A"), q(1)), (axis("B"), q(1))],
+    )
+    .unwrap();
     assert_eq!(
         incidence.law().provenance(),
         &Provenance::IncidenceNullspace
@@ -537,7 +558,7 @@ fn checked_certificates_recompute_nullspace_and_seal_incidence_provenance() {
 #[test]
 fn basis_has_rows_minus_rank_members_and_direct_open_balance_is_semantic() {
     let carrier = carrier(false);
-    let basis = derive_nullspace_basis(&carrier, kind()).unwrap();
+    let basis = derive_nullspace_basis(&carrier, TestKind::Material).unwrap();
     assert_eq!(basis.len(), 1); // two rows minus rank one
     assert_eq!(basis[0].law().coefficient(&axis("A")), &q(1));
     assert_eq!(basis[0].law().coefficient(&axis("B")), &q(1));
@@ -562,8 +583,12 @@ fn basis_has_rows_minus_rank_members_and_direct_open_balance_is_semantic() {
 #[test]
 fn checked_open_balance_projects_to_existing_graded_invariant() {
     let carrier = carrier(false);
-    let certificate =
-        certify_nullspace(&carrier, kind(), [(axis("A"), q(1)), (axis("B"), q(1))]).unwrap();
+    let certificate = certify_nullspace(
+        &carrier,
+        TestKind::Material,
+        [(axis("A"), q(1)), (axis("B"), q(1))],
+    )
+    .unwrap();
     let projected = certificate
         .graded_invariant(&carrier, [ledger("input-ledger"), ledger("output-ledger")])
         .unwrap();
@@ -590,14 +615,18 @@ fn checked_open_balance_projects_to_existing_graded_invariant() {
 #[test]
 fn suite_retains_every_named_typed_outcome_in_canonical_order() {
     let carrier = carrier(false);
-    let certificate =
-        certify_nullspace(&carrier, kind(), [(axis("A"), q(1)), (axis("B"), q(1))]).unwrap();
+    let certificate = certify_nullspace(
+        &carrier,
+        TestKind::Material,
+        [(axis("A"), q(1)), (axis("B"), q(1))],
+    )
+    .unwrap();
     let suite = StockFlowLawSuite::new(
         Some(TransitionEquation::new(sentence("d-transition"))),
         [LinearFlowConstraint::new(
             &carrier,
             sentence("a-partition"),
-            kind(),
+            TestKind::Material,
             [(flow("f1"), q(1)), (flow("f2"), q(-2))],
             q(0),
         )
@@ -646,8 +675,8 @@ proptest! {
             &report,
             ledgers(0, 0),
             ExactAmounts::new([
-                (ledger("input-ledger"), kind(), input_applied),
-                (ledger("output-ledger"), kind(), output_applied),
+                (ledger("input-ledger"), TestKind::Material, input_applied),
+                (ledger("output-ledger"), TestKind::Material, output_applied),
             ]).unwrap(),
         ).unwrap();
         let trace = TransitionTrace::new(carrier.clone(), vec![record]).unwrap();
@@ -655,7 +684,7 @@ proptest! {
             &TransitionEquation::new(sentence("transition")),
             &trace,
         ).unwrap().is_satisfied());
-        for certificate in derive_nullspace_basis(&carrier, kind()).unwrap() {
+        for certificate in derive_nullspace_basis(&carrier, TestKind::Material).unwrap() {
             prop_assert!(check_open_balance(
                 &certificate.open_balance(sentence("derived")),
                 &trace,

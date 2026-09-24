@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
-use conservation_core::{AxisId, BalanceLaw, BalanceLawError, KindId, Provenance};
+use conservation_core::{AxisId, BalanceLaw, BalanceLawError, Kind, Provenance};
 use num_bigint::BigInt;
 use num_integer::Integer;
 use num_rational::BigRational;
@@ -179,11 +179,11 @@ impl TransitionMatrix {
 /// Each returned rational basis vector is scaled to primitive integer
 /// coefficients for stable presentation. The result is not an integer-lattice
 /// basis and makes no claim to span every integer solution by integer multiples.
-pub fn derive_left_nullspace(
+pub fn derive_left_nullspace<K: Kind>(
     matrix: &TransitionMatrix,
-    kind: KindId,
+    kind: K,
     source: NullspaceSource,
-) -> Result<Vec<BalanceLaw>, BalanceLawError> {
+) -> Result<Vec<BalanceLaw<K>>, BalanceLawError> {
     let mut transpose = vec![vec![BigRational::zero(); matrix.axes.len()]; matrix.transition_count];
     for (axis_index, row) in matrix.entries.iter().enumerate() {
         for (transition_index, value) in row.iter().enumerate() {
@@ -195,7 +195,7 @@ pub fn derive_left_nullspace(
         .into_iter()
         .map(|vector| {
             BalanceLaw::new(
-                kind.clone(),
+                kind,
                 matrix.axes.iter().cloned().zip(vector),
                 source.provenance(),
             )
