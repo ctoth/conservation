@@ -474,11 +474,33 @@ impl<K: Kind> StockFlowSystem<K> {
         &mut self,
         proposals: &[ProposedFlow<K>],
     ) -> Result<SettlementReport<K>, StockFlowError<K>> {
+        /// A flow's resolved endpoints; each role carries exactly its stocks.
+        enum Ends {
+            Input { target: usize },
+            Output { source: usize },
+            Transfer { source: usize, target: usize },
+        }
+
+        impl Ends {
+            fn source(&self) -> Option<usize> {
+                match *self {
+                    Self::Input { .. } => None,
+                    Self::Output { source } | Self::Transfer { source, .. } => Some(source),
+                }
+            }
+
+            fn role(&self) -> FlowRole {
+                match self {
+                    Self::Input { .. } => FlowRole::Input,
+                    Self::Output { .. } => FlowRole::Output,
+                    Self::Transfer { .. } => FlowRole::Transfer,
+                }
+            }
+        }
+
         struct Resolved<'a, K> {
             proposal: &'a ProposedFlow<K>,
-            source: Option<usize>,
-            target: Option<usize>,
-            role: FlowRole,
+            ends: Ends,
         }
 
         let mut resolved = Vec::with_capacity(proposals.len());
@@ -501,7 +523,7 @@ impl<K: Kind> StockFlowSystem<K> {
                 .as_ref()
                 .map(|stock| self.resolve(stock, proposal.kind))
                 .transpose()?;
-            let role = match (source, target) {
+            let ends = match (source, target) {
                 (None, None) => return Err(StockFlowError::DisconnectedFlow),
                 (Some(source), Some(target)) if source == target => {
                     return Err(StockFlowError::SameStock(self.stocks[source].clone()));
@@ -514,19 +536,14 @@ impl<K: Kind> StockFlowSystem<K> {
                         target_kind: self.kinds[target],
                     });
                 }
-                (None, Some(_)) => FlowRole::Input,
-                (Some(_), None) => FlowRole::Output,
-                (Some(_), Some(_)) => FlowRole::Transfer,
+                (None, Some(target)) => Ends::Input { target },
+                (Some(source), None) => Ends::Output { source },
+                (Some(source), Some(target)) => Ends::Transfer { source, target },
             };
-            if let Some(source) = source {
+            if let Some(source) = ends.source() {
                 requested[source] += &proposal.amount;
             }
-            resolved.push(Resolved {
-                proposal,
-                source,
-                target,
-                role,
-            });
+            resolved.push(Resolved { proposal, ends });
         }
 
         let scales = (0..self.amounts.len())
@@ -540,7 +557,7 @@ impl<K: Kind> StockFlowSystem<K> {
                         resolved
                             .iter()
                             .filter(|flow| {
-                                flow.source == Some(stock)
+                                flow.ends.source() == Some(stock)
                                     && flow.proposal.amount.is_positive()
                                     && self
                                         .rationing
@@ -562,24 +579,23 @@ impl<K: Kind> StockFlowSystem<K> {
         let mut batch_outputs = BTreeMap::<K, BigRational>::new();
 
         for flow in resolved {
-            let amount = flow.source.map_or_else(
+            let amount = flow.ends.source().map_or_else(
                 || flow.proposal.amount.clone(),
                 |source| &flow.proposal.amount * &scales[source],
             );
-            match (flow.source, flow.target) {
-                (Some(source), Some(target)) => {
+            match flow.ends {
+                Ends::Transfer { source, target } => {
                     deltas[source] -= &amount;
                     deltas[target] += &amount;
                 }
-                (None, Some(target)) => {
+                Ends::Input { target } => {
                     deltas[target] += &amount;
                     *batch_inputs.entry(self.kinds[target]).or_default() += &amount;
                 }
-                (Some(source), None) => {
+                Ends::Output { source } => {
                     deltas[source] -= &amount;
                     *batch_outputs.entry(self.kinds[source]).or_default() += &amount;
                 }
-                (None, None) => unreachable!("disconnected flows were rejected before settlement"),
             }
             applied.push(AppliedFlow {
                 process: flow.proposal.process.clone(),
@@ -588,7 +604,7 @@ impl<K: Kind> StockFlowSystem<K> {
                 target: flow.proposal.target.clone(),
                 requested: flow.proposal.amount.clone(),
                 applied: amount,
-                role: flow.role,
+                role: flow.ends.role(),
             });
         }
 
