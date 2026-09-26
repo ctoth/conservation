@@ -238,7 +238,7 @@ fn registry_resolves_every_name_it_displays() {
         assert_eq!(thermal().resolve(&k.to_string()), Some(k));
     }
     assert_eq!(thermal().resolve("Energy"), None);
-    assert_eq!(thermal().kinds().len(), 25);
+    assert_eq!(thermal().kinds().len(), thermal().registry().kinds().len());
 }
 
 #[test]

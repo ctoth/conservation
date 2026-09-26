@@ -53,7 +53,7 @@ checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
 [[package]]
 name = "bridgman-core"
 version = "0.3.0"
-source = "git+https://github.com/ctoth/bridgman.git?rev=ddbedade47fda8fab1280b03d9a8d108ff8dd2f6#ddbedade47fda8fab1280b03d9a8d108ff8dd2f6"
+source = "git+https://github.com/ctoth/bridgman.git?rev=63bccf522debc418ddac11a00a9ff5da0661bc45#63bccf522debc418ddac11a00a9ff5da0661bc45"
 dependencies = [
  "num-bigint",
  "num-rational",
