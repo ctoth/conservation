@@ -12,9 +12,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
-mod kinds;
-
-use kinds::{Declaration, DeclarationError, NativeKind, NativeRegistry, NativeTable};
+use conservation_bridgman::{BridgmanKind, BridgmanKinds};
 
 create_exception!(_native, ExchangeError, PyValueError);
 create_exception!(_native, InvalidExchange, ExchangeError);
@@ -29,9 +27,8 @@ create_exception!(_native, ForeignPreparationError, ExchangeError);
 create_exception!(_native, SnapshotError, ExchangeError);
 create_exception!(_native, KindError, ExchangeError);
 create_exception!(_native, UnknownKindError, KindError);
-create_exception!(_native, KindDeclarationError, KindError);
 
-fn failure(error: core::Error<NativeKind>) -> PyErr {
+fn failure(error: core::Error<BridgmanKind>) -> PyErr {
     let message = error.to_string();
     match error {
         core::Error::Invalid(_) => InvalidExchange::new_err(message),
@@ -51,43 +48,10 @@ fn failure(error: core::Error<NativeKind>) -> PyErr {
     }
 }
 
-fn declaration_failure(error: DeclarationError) -> PyErr {
-    KindDeclarationError::new_err(error.to_string())
-}
-
 fn rational(value: &str) -> PyResult<BigRational> {
     BigRational::from_str(value).map_err(|_| {
         InvalidExchange::new_err("expected an exact integer or numerator/denominator string")
     })
-}
-
-/// How one kind is declared: its dimensions, an optional floor and, for a point
-/// kind, the kind of its differences.
-#[pyclass(
-    name = "KindDeclaration",
-    module = "conservation_exchange._native",
-    frozen
-)]
-struct KindDeclaration {
-    dimensions: BTreeMap<String, i32>,
-    floor: Option<String>,
-    difference: Option<String>,
-}
-#[pymethods]
-impl KindDeclaration {
-    #[new]
-    #[pyo3(signature = (dimensions=None, *, floor=None, difference=None))]
-    fn new(
-        dimensions: Option<BTreeMap<String, i32>>,
-        floor: Option<String>,
-        difference: Option<String>,
-    ) -> Self {
-        Self {
-            dimensions: dimensions.unwrap_or_default(),
-            floor,
-            difference,
-        }
-    }
 }
 
 /// Resolves kind names. A registry is validated once and lives until the
@@ -98,32 +62,10 @@ impl KindDeclaration {
     frozen
 )]
 struct KindRegistry {
-    inner: NativeRegistry,
+    inner: BridgmanKinds,
 }
 #[pymethods]
 impl KindRegistry {
-    #[new]
-    fn new(py: Python<'_>, declarations: BTreeMap<String, Py<KindDeclaration>>) -> PyResult<Self> {
-        let declarations = declarations
-            .into_iter()
-            .map(|(name, declaration)| {
-                let declaration = declaration.borrow(py);
-                (
-                    name,
-                    Declaration {
-                        dimensions: declaration.dimensions.clone(),
-                        floor: declaration.floor.clone(),
-                        difference: declaration.difference.clone(),
-                    },
-                )
-            })
-            .collect();
-        let table = NativeTable::leak(declarations, |value| rational(value).ok())
-            .map_err(declaration_failure)?;
-        Ok(Self {
-            inner: NativeRegistry::new(table),
-        })
-    }
     fn kind(&self, name: &str) -> PyResult<Kind> {
         use conservation_core::KindRegistry as _;
         self.inner
@@ -133,20 +75,35 @@ impl KindRegistry {
     }
 }
 
+/// Reads the existing bundled catalog; repeated calls share kind identity.
+#[pyfunction]
+fn bridgman_kinds() -> PyResult<KindRegistry> {
+    Ok(KindRegistry {
+        inner: BridgmanKinds::thermal().map_err(|error| KindError::new_err(error.to_string()))?,
+    })
+}
+
 /// One kind of one registry.
 #[pyclass(name = "Kind", module = "conservation_exchange._native", frozen)]
 struct Kind {
-    inner: NativeKind,
+    inner: BridgmanKind,
 }
 #[pymethods]
 impl Kind {
     #[getter]
     fn name(&self) -> &'static str {
-        self.inner.name()
+        self.inner.bridgman().id()
     }
     #[getter]
-    fn dimensions(&self) -> BTreeMap<String, i32> {
-        self.inner.powers()
+    fn dimensions(&self) -> PyResult<BTreeMap<String, String>> {
+        Ok(self
+            .inner
+            .bridgman()
+            .dimensions()
+            .map_err(|error| KindError::new_err(error.to_string()))?
+            .powers()
+            .map(|(name, power)| (name.to_owned(), power.to_string()))
+            .collect())
     }
     #[getter]
     fn floor(&self) -> Option<String> {
@@ -174,7 +131,7 @@ impl Kind {
 
 #[pyclass(name = "Quantity", module = "conservation_exchange._native", frozen)]
 struct Quantity {
-    inner: core::Quantity<NativeKind>,
+    inner: core::Quantity<BridgmanKind>,
 }
 #[pymethods]
 impl Quantity {
@@ -201,7 +158,7 @@ impl Quantity {
 
 #[pyclass(name = "Expr", module = "conservation_exchange._native", frozen)]
 struct Expr {
-    inner: core::Expr<NativeKind>,
+    inner: core::Expr<BridgmanKind>,
 }
 #[pymethods]
 impl Expr {
@@ -261,7 +218,7 @@ impl Expr {
 
 #[pyclass(name = "Constraint", module = "conservation_exchange._native", frozen)]
 struct Constraint {
-    inner: core::Constraint<NativeKind>,
+    inner: core::Constraint<BridgmanKind>,
 }
 #[pymethods]
 impl Constraint {
@@ -287,7 +244,7 @@ impl Constraint {
 
 #[pyclass(name = "Fact", module = "conservation_exchange._native", frozen)]
 struct Fact {
-    inner: core::Fact<NativeKind>,
+    inner: core::Fact<BridgmanKind>,
 }
 #[pymethods]
 impl Fact {
@@ -304,7 +261,7 @@ impl Fact {
 
 #[pyclass(name = "Capacity", module = "conservation_exchange._native", frozen)]
 struct Capacity {
-    inner: core::Capacity<NativeKind>,
+    inner: core::Capacity<BridgmanKind>,
 }
 #[pymethods]
 impl Capacity {
@@ -321,7 +278,7 @@ impl Capacity {
 fn quantities(
     py: Python<'_>,
     values: Option<BTreeMap<String, Py<Quantity>>>,
-) -> BTreeMap<String, core::Quantity<NativeKind>> {
+) -> BTreeMap<String, core::Quantity<BridgmanKind>> {
     values
         .unwrap_or_default()
         .into_iter()
@@ -332,7 +289,7 @@ fn quantities(
 fn kinds(
     py: Python<'_>,
     values: Option<BTreeMap<String, Py<Kind>>>,
-) -> BTreeMap<String, NativeKind> {
+) -> BTreeMap<String, BridgmanKind> {
     values
         .unwrap_or_default()
         .into_iter()
@@ -342,7 +299,7 @@ fn kinds(
 
 #[pyclass(name = "Stock", module = "conservation_exchange._native", frozen)]
 struct Stock {
-    inner: core::Stock<NativeKind>,
+    inner: core::Stock<BridgmanKind>,
 }
 #[pymethods]
 impl Stock {
@@ -382,7 +339,7 @@ impl Stock {
 
 #[pyclass(name = "Placement", module = "conservation_exchange._native", frozen)]
 struct Placement {
-    inner: core::Placement<NativeKind>,
+    inner: core::Placement<BridgmanKind>,
 }
 #[pymethods]
 impl Placement {
@@ -404,7 +361,7 @@ impl Placement {
 
 #[pyclass(name = "Law", module = "conservation_exchange._native", frozen)]
 struct Law {
-    inner: core::Law<NativeKind>,
+    inner: core::Law<BridgmanKind>,
 }
 #[pymethods]
 impl Law {
@@ -441,7 +398,7 @@ impl Law {
 
 #[pyclass(name = "Model", module = "conservation_exchange._native", frozen)]
 struct Model {
-    inner: core::Model<NativeKind>,
+    inner: core::Model<BridgmanKind>,
 }
 #[pymethods]
 impl Model {
@@ -472,7 +429,7 @@ impl Model {
 
 #[pyclass(name = "Exchange", module = "conservation_exchange._native", frozen)]
 struct Exchange {
-    inner: core::Exchange<NativeKind>,
+    inner: core::Exchange<BridgmanKind>,
 }
 #[pymethods]
 impl Exchange {
@@ -542,15 +499,15 @@ impl RecordWrite {
     frozen
 )]
 struct Participation {
-    inner: core::Participation<NativeKind>,
+    inner: core::Participation<BridgmanKind>,
 }
 #[pyclass(name = "Prepared", module = "conservation_exchange._native", frozen)]
 struct Prepared {
-    inner: core::Prepared<NativeKind>,
+    inner: core::Prepared<BridgmanKind>,
 }
 #[pyclass(name = "Receipt", module = "conservation_exchange._native", frozen)]
 struct Receipt {
-    inner: core::Receipt<NativeKind>,
+    inner: core::Receipt<BridgmanKind>,
 }
 #[pymethods]
 impl Receipt {
@@ -594,7 +551,7 @@ impl Receipt {
 
 #[pyclass(name = "Engine", module = "conservation_exchange._native")]
 struct Engine {
-    inner: core::Engine<NativeKind>,
+    inner: core::Engine<BridgmanKind>,
 }
 #[pymethods]
 impl Engine {
@@ -715,7 +672,7 @@ impl Engine {
 #[pymodule]
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("__version__", env!("CARGO_PKG_VERSION"))?;
-    module.add_class::<KindDeclaration>()?;
+    module.add_function(wrap_pyfunction!(bridgman_kinds, module)?)?;
     module.add_class::<KindRegistry>()?;
     module.add_class::<Kind>()?;
     module.add_class::<Quantity>()?;
@@ -756,9 +713,5 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("SnapshotError", py.get_type::<SnapshotError>())?;
     module.add("KindError", py.get_type::<KindError>())?;
     module.add("UnknownKindError", py.get_type::<UnknownKindError>())?;
-    module.add(
-        "KindDeclarationError",
-        py.get_type::<KindDeclarationError>(),
-    )?;
     Ok(())
 }

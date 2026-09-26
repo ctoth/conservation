@@ -5,10 +5,7 @@ import pytest
 import conservation_exchange as ce
 
 
-REGISTRY = ce.KindRegistry({
-    "mass": ce.KindDeclaration({"mass": 1}, floor="0"),
-    "ratio": ce.KindDeclaration(),
-})
+REGISTRY = ce.bridgman_kinds()
 MASS = REGISTRY.kind("mass")
 RATIO = REGISTRY.kind("ratio")
 

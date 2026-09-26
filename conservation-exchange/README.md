@@ -107,11 +107,14 @@ law. Put reproducible arithmetic in the expression language when possible.
 All execution uses arbitrary-precision `BigRational`. Python accepts integer or
 fraction strings (for example `"17"` and `"1/1000"`), never implicit floats,
 decimal rounding, NaN or infinity. Python `Quantity.fraction` returns the exact
-canonical value. Python kinds come from a `KindRegistry`, whose declarations give
-each kind integer exponents over application-defined base dimensions, an optional
-exact floor and, for a point kind, its difference kind; product and quotient check
-exponent overflow. Display-unit conversion is the application's responsibility
-before supplying canonical quantities.
+canonical value. Python kinds come from `bridgman_kinds()`, a handle into
+Bridgman's bundled catalog through conservation-bridgman. Kind identity, exact
+rational dimension exponents, floors and affine differences come from that
+catalog. `Kind.dimensions` returns exact fraction strings. There is no separate
+Python kind declaration table. Display-unit conversion is the application's
+responsibility before supplying canonical quantities. The generic Rust exchange
+crate remains independent of Bridgman. Snapshot version 3 resolves catalog kind
+names; version 2 snapshots and removed kind names are explicitly refused.
 
 Expressions support exact constants; before/after/delta stock-role values;
 declared boundary inputs and owner facts; sums, products and quotients. Addition
@@ -176,11 +179,11 @@ history claim. This is distinct from snapshotting foreign objects for rollback.
 
 ```python
 from conservation_exchange import (
-    Constraint, Engine, Exchange, Expr, KindDeclaration, KindRegistry, Law, Quantity, Stock,
+    Constraint, Engine, Exchange, Expr, bridgman_kinds, Law, Quantity, Stock,
 )
 
-# A registry lives until the process exits; build one per application.
-registry = KindRegistry({"mass": KindDeclaration({"mass": 1}, floor="0")})
+# Every call refers to the same catalog, so kind identity is shared.
+registry = bridgman_kinds()
 kg = registry.kind("mass")
 supply = Law(
     "supply", {"stock": kg},

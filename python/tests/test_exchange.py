@@ -9,23 +9,15 @@ import pytest
 
 import conservation_exchange as ce
 
-REGISTRY = ce.KindRegistry({
-    "material": ce.KindDeclaration({"material": 1}, floor="0"),
-    "material_balance": ce.KindDeclaration({"material": 1}),
-    "energy": ce.KindDeclaration({"energy": 1}, floor="0"),
-    "torque": ce.KindDeclaration({"energy": 1}),
-    "ratio": ce.KindDeclaration(),
-    "temperature": ce.KindDeclaration({"temperature": 1}, floor="0", difference="temperature_delta"),
-    "temperature_delta": ce.KindDeclaration({"temperature": 1}),
-})
-MATERIAL = REGISTRY.kind("material")
-MATERIAL_BALANCE = REGISTRY.kind("material_balance")
+REGISTRY = ce.bridgman_kinds()
+MASS = REGISTRY.kind("mass")
+SIGNED_ENERGY = REGISTRY.kind("energy")
 ENERGY = REGISTRY.kind("energy")
 TORQUE = REGISTRY.kind("torque")
 RATIO = REGISTRY.kind("ratio")
 
 
-def q(amount: int, kind: ce.Kind = MATERIAL) -> ce.Quantity:
+def q(amount: int, kind: ce.Kind = MASS) -> ce.Quantity:
     return ce.Quantity(str(amount), kind)
 
 
@@ -39,19 +31,19 @@ def supply_law(id: str, kind: ce.Kind) -> ce.Law:
 
 def engine(*, capacity: int = 100) -> ce.Engine:
     reaction = ce.Law(
-        "combine", {key: MATERIAL for key in ("a", "b", "out")},
+        "combine", {key: MASS for key in ("a", "b", "out")},
         [
             ce.Constraint("stoichiometry", ce.Expr.delta("a"), ce.Expr.delta("b")),
             ce.Constraint("balance", ce.Expr.sum([ce.Expr.delta(key) for key in ("a", "b", "out")]), ce.Expr.constant(q(0))),
         ],
         participants={"journal"},
     )
-    laws = [supply_law("supply", MATERIAL), supply_law("signed-supply", MATERIAL_BALANCE), reaction]
+    laws = [supply_law("supply", MASS), supply_law("signed-supply", SIGNED_ENERGY), reaction]
     return ce.Engine({"owner", "journal"}, laws, {"hold": ce.Capacity(q(capacity))})
 
 
 def supply(target: ce.Engine, stock: str, amount: int, *, signed: bool = False) -> ce.Receipt:
-    kind = MATERIAL_BALANCE if signed else MATERIAL
+    kind = SIGNED_ENERGY if signed else MASS
     proposal = ce.Exchange(
         f"supply-{stock}", "signed-supply" if signed else "supply", {"stock": stock},
         deltas={"stock": q(amount, kind)}, boundaries={"supply": q(amount, kind)},
@@ -136,7 +128,7 @@ def test_stale_preparations_and_restored_lineages_cannot_publish() -> None:
 def test_capacity_signed_values_and_boundary_validation() -> None:
     target = engine(capacity=3)
     supply(target, "signed", -10, signed=True)
-    assert target.amount("signed") == q(-10, MATERIAL_BALANCE)
+    assert target.amount("signed") == q(-10, SIGNED_ENERGY)
     assert target.stock("signed").kind.floor is None
     supply(target, "a", 3)
     before = target.snapshot()
@@ -155,14 +147,14 @@ def test_quantities_reject_nonexact_or_nonfinite_input(value: str) -> None:
 
 
 def test_dimensions_and_native_definitions_are_immutable_snapshots() -> None:
-    assert ENERGY.dimensions == {"energy": 1}
+    assert ENERGY.dimensions == {"M": "1", "L": "2", "T": "-2"}
     assert RATIO.dimensions == {}
     assert ce.Quantity("2/4", ENERGY).fraction == "1/2"
-    slots = {"stock": MATERIAL}
-    law = ce.Law("supply", slots, [ce.Constraint("supply", ce.Expr.delta("stock"), ce.Expr.boundary("supply"))], boundaries={"supply": MATERIAL})
+    slots = {"stock": MASS}
+    law = ce.Law("supply", slots, [ce.Constraint("supply", ce.Expr.delta("stock"), ce.Expr.boundary("supply"))], boundaries={"supply": MASS})
     slots["stock"] = ENERGY
     target = ce.Engine({"owner", "journal"}, [law])
-    request = ce.Exchange("seed", "supply", {"stock": "x"}, deltas={"stock": q(1)}, boundaries={"supply": q(1)}, creates=[ce.Stock("x", "owner", MATERIAL)])
+    request = ce.Exchange("seed", "supply", {"stock": "x"}, deltas={"stock": q(1)}, boundaries={"supply": q(1)}, creates=[ce.Stock("x", "owner", MASS)])
     target.publish(target.prepare(request))
     assert target.amount("x") == q(1)
     with pytest.raises(AttributeError):
@@ -170,16 +162,16 @@ def test_dimensions_and_native_definitions_are_immutable_snapshots() -> None:
 
 
 def test_evaluated_fact_and_topology_change_use_same_native_commit() -> None:
-    seed = ce.Law("seed", {"stock": MATERIAL},
+    seed = ce.Law("seed", {"stock": MASS},
                   [ce.Constraint("source", ce.Expr.delta("stock"), ce.Expr.boundary("source"))],
-                  boundaries={"source": MATERIAL})
-    move = ce.Law("move", {"stock": MATERIAL},
+                  boundaries={"source": MASS})
+    move = ce.Law("move", {"stock": MASS},
                   [ce.Constraint("preserve", ce.Expr.delta("stock"), ce.Expr.constant(q(0))),
                    ce.Constraint("limit", ce.Expr.after("stock"), ce.Expr.fact("limit"), less_or_equal=True)],
-                  participants={"owner"}, facts={"limit": ce.Fact("owner", MATERIAL)})
+                  participants={"owner"}, facts={"limit": ce.Fact("owner", MASS)})
     target = ce.Engine({"owner", "destination"}, [seed, move])
     request = ce.Exchange("seed", "seed", {"stock": "x"}, deltas={"stock": q(3)},
-                          boundaries={"source": q(3)}, creates=[ce.Stock("x", "owner", MATERIAL)])
+                          boundaries={"source": q(3)}, creates=[ce.Stock("x", "owner", MASS)])
     target.publish(target.prepare(request))
     request = ce.Exchange("move", "move", {"stock": "x"}, moves={"x": ce.Placement("destination")})
     insufficient = target.participate("owner", request, facts={"limit": q(2)})
@@ -214,7 +206,7 @@ def test_required_journal_commits_before_observer_and_is_not_repeated() -> None:
 
 
 def test_invalid_model_and_snapshot_fail_loudly() -> None:
-    invalid = ce.Law("wrong-dimension", {"stock": MATERIAL},
+    invalid = ce.Law("wrong-dimension", {"stock": MASS},
                      [ce.Constraint("bad", ce.Expr.delta("stock"), ce.Expr.constant(ce.Quantity("0", ENERGY)))])
     with pytest.raises(ce.DimensionError, match="bad"):
         ce.Engine({"owner"}, [invalid])
@@ -223,10 +215,10 @@ def test_invalid_model_and_snapshot_fail_loudly() -> None:
 
 
 def test_registry_resolves_names_and_rejects_unknown_by_name() -> None:
-    assert REGISTRY.kind("material").name == "material"
-    assert REGISTRY.kind("material") == MATERIAL
-    assert hash(REGISTRY.kind("material")) == hash(MATERIAL)
-    assert MATERIAL != MATERIAL_BALANCE
+    assert REGISTRY.kind("mass").name == "mass"
+    assert REGISTRY.kind("mass") == MASS
+    assert hash(REGISTRY.kind("mass")) == hash(MASS)
+    assert MASS != SIGNED_ENERGY
     with pytest.raises(ce.UnknownKindError, match="materiel"):
         REGISTRY.kind("materiel")
 
@@ -237,27 +229,15 @@ def test_kinds_report_floor_and_difference() -> None:
     assert delta is not None and delta.name == "temperature_delta"
     assert delta.difference is None
     assert temperature.floor == "0"
-    assert MATERIAL.floor == "0"
-    assert MATERIAL_BALANCE.floor is None
-    assert MATERIAL.difference is None
+    assert MASS.floor == "0"
+    assert SIGNED_ENERGY.floor is None
+    assert MASS.difference is None
 
 
-def test_kind_declarations_are_validated() -> None:
-    material = ce.KindDeclaration({"material": 1})
-    invalid: list[dict[str, ce.KindDeclaration]] = [
-        {" ": material},
-        {"material": ce.KindDeclaration({" ": 1})},
-        {"material": ce.KindDeclaration({"material": 0})},
-        {"point": ce.KindDeclaration({"material": 1}, difference="missing")},
-        {"point": ce.KindDeclaration({"material": 1}, difference="other"),
-         "other": ce.KindDeclaration({"material": 1}, difference="material"),
-         "material": material},
-        {"point": ce.KindDeclaration({"material": 1}, difference="energy"),
-         "energy": ce.KindDeclaration({"energy": 1})},
-    ]
-    for declarations in invalid:
-        with pytest.raises(ce.KindDeclarationError):
-            ce.KindRegistry(declarations)
+def test_python_does_not_declare_a_second_kind_catalog() -> None:
+    assert not hasattr(ce, "KindDeclaration")
+    with pytest.raises(TypeError):
+        ce.KindRegistry()
 
 
 def test_mismatched_leg_names_both_kinds() -> None:
@@ -266,7 +246,7 @@ def test_mismatched_leg_names_both_kinds() -> None:
                            creates=[ce.Stock("battery", "owner", ENERGY)])
     with pytest.raises(ce.DimensionError) as error:
         target.prepare(proposal)
-    assert "material" in str(error.value) and "energy" in str(error.value)
+    assert "mass" in str(error.value) and "energy" in str(error.value)
 
 
 def test_equal_dimension_kinds_cannot_share_a_slot() -> None:
@@ -282,12 +262,9 @@ def test_equal_dimension_kinds_cannot_share_a_slot() -> None:
 def test_restore_resolves_kinds_against_the_supplied_registry() -> None:
     target = engine()
     supply(target, "a", 3)
-    without_material = ce.KindRegistry({
-        "material_balance": ce.KindDeclaration({"material": 1}),
-        "ratio": ce.KindDeclaration(),
-    })
-    with pytest.raises(ce.UnknownKindError, match="material"):
-        ce.Engine.restore(target.snapshot(), without_material)
+    unknown = target.snapshot().replace(b'"mass"', b'"missing_mass"')
+    with pytest.raises(ce.UnknownKindError, match="missing_mass"):
+        ce.Engine.restore(unknown, REGISTRY)
     assert ce.Engine.restore(target.snapshot(), REGISTRY).snapshot() == target.snapshot()
 
 

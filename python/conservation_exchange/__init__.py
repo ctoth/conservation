@@ -16,8 +16,6 @@ from ._native import (
     ForeignPreparationError as ForeignPreparationError,
     InvalidExchange as InvalidExchange,
     Kind as Kind,
-    KindDeclaration as KindDeclaration,
-    KindDeclarationError as KindDeclarationError,
     KindError as KindError,
     KindRegistry as KindRegistry,
     Law as Law,
@@ -34,4 +32,5 @@ from ._native import (
     Stock as Stock,
     UnknownKindError as UnknownKindError,
     __version__ as __version__,
+    bridgman_kinds as bridgman_kinds,
 )

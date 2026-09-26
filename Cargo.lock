@@ -53,7 +53,7 @@ checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
 [[package]]
 name = "bridgman-core"
 version = "0.3.0"
-source = "git+https://github.com/ctoth/bridgman.git?rev=63bccf522debc418ddac11a00a9ff5da0661bc45#63bccf522debc418ddac11a00a9ff5da0661bc45"
+source = "git+https://github.com/ctoth/bridgman.git?rev=77adb8ab5bc38990806915418328a681d1cff3a4#77adb8ab5bc38990806915418328a681d1cff3a4"
 dependencies = [
  "num-bigint",
  "num-rational",
@@ -210,6 +210,7 @@ dependencies = [
 name = "conservation-python"
 version = "0.3.0"
 dependencies = [
+ "conservation-bridgman",
  "conservation-core",
  "conservation-exchange",
  "num-rational",
