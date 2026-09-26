@@ -90,15 +90,17 @@ pub struct DenseTolerance {
 }
 
 impl DenseTolerance {
+    /// Whether both error budgets are finite and nonnegative.
+    pub fn is_valid(self) -> bool {
+        self.absolute.is_finite()
+            && self.relative.is_finite()
+            && self.absolute >= 0.0
+            && self.relative >= 0.0
+    }
+
     /// Tests two finite values using `absolute + relative * max(|a|, |b|)`.
     pub fn contains(self, left: f64, right: f64) -> bool {
-        if !left.is_finite()
-            || !right.is_finite()
-            || !self.absolute.is_finite()
-            || !self.relative.is_finite()
-            || self.absolute < 0.0
-            || self.relative < 0.0
-        {
+        if !left.is_finite() || !right.is_finite() || !self.is_valid() {
             return false;
         }
         let scale = left.abs().max(right.abs());
@@ -405,11 +407,7 @@ impl<K: Kind> DenseState<K> {
 
     /// Tests the balance residual against an error budget scaled to all terms.
     pub fn balance_within(&self, kind: K, tolerance: DenseTolerance) -> bool {
-        if !tolerance.absolute.is_finite()
-            || !tolerance.relative.is_finite()
-            || tolerance.absolute < 0.0
-            || tolerance.relative < 0.0
-        {
+        if !tolerance.is_valid() {
             return false;
         }
         self.topology.kind_index(kind).is_some_and(|index| {

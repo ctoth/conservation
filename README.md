@@ -23,6 +23,14 @@ This Cargo workspace contains the following library crates:
   contiguous binary64 state is a candidate execution path with an explicit
   comparison tolerance and atomic overflow rejection. Performance claims wait
   for domain-scale benchmarks.
+  `DenseState::ensemble` executes independent native lanes through that same
+  settlement path. It copies and validates all initial lanes before invoking
+  native rate callbacks, returns owned `(lane, sample, stock)` coordinates and
+  `(lane, sample, kind)` balance diagnostics under an explicit tolerance, and
+  retains lane/step/source on failures. It provides no exact trace witness and
+  does not make independent lanes interact. Empty batches and zero-step runs
+  have explicit shapes; invalid shapes, nonfinite inputs, allocation failures
+  and invalid tolerances are errors. The topology owns stock/kind order.
 - `conservation-trace` checks finite-state traces exactly and returns typed
   satisfied/violated verdicts, structurally separate from malformed-trace
   errors. Trace witnesses do not inherit derivation-origin metadata.

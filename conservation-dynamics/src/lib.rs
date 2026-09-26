@@ -23,9 +23,11 @@ use num_rational::BigRational;
 use num_traits::{One, Signed, Zero};
 
 mod compiled;
+mod ensemble;
 mod topology;
 
 pub use compiled::{CompiledSettlementReport, DenseState, DenseTolerance, ExactState};
+pub use ensemble::{DenseBalance, DenseTrajectory, EnsembleError};
 pub use topology::{
     CompiledFlow, FlowSpec, FlowTopology, ProcessDefinition, Rationing, StockDefinition,
 };
