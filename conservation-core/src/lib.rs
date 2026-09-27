@@ -13,9 +13,39 @@ use num_traits::Zero;
 
 static ZERO: LazyLock<BigRational> = LazyLock::new(BigRational::zero);
 
-/// Identifies one coordinate of a quantitative state.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct AxisId(String);
+/// Declares a nonblank string identifier type: `identifier!(Name, "doc")`.
+/// The one declaration of what an identifier is; every identifier type in the
+/// workspace is made by it.
+#[macro_export]
+macro_rules! identifier {
+    ($name:ident, $doc:literal) => {
+        #[doc = $doc]
+        #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        pub struct $name(String);
+
+        impl $name {
+            /// Creates a nonblank identifier.
+            pub fn new(value: impl Into<String>) -> Result<Self, $crate::IdentifierError> {
+                let value = value.into();
+                $crate::nonblank(&value)?;
+                Ok(Self(value))
+            }
+
+            /// Returns the identifier text.
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
+
+        impl ::std::fmt::Display for $name {
+            fn fmt(&self, formatter: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                self.0.fmt(formatter)
+            }
+        }
+    };
+}
+
+identifier!(AxisId, "Identifies one coordinate of a quantitative state.");
 
 /// An error constructing a typed identifier.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -97,26 +127,6 @@ pub trait KindRegistry {
     type Kind: Kind;
     /// The handle whose `Display` is `name`, if the registry declares it.
     fn resolve(&self, name: &str) -> Option<Self::Kind>;
-}
-
-impl AxisId {
-    /// Creates an axis identifier.
-    pub fn new(value: impl Into<String>) -> Result<Self, IdentifierError> {
-        let value = value.into();
-        nonblank(&value)?;
-        Ok(Self(value))
-    }
-
-    /// Returns the identifier text.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for AxisId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(formatter)
-    }
 }
 
 /// Records an asserted origin for a conservation law.

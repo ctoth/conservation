@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
-use conservation_core::{IdentifierError, Kind, nonblank};
+use conservation_core::{Kind, identifier};
 use num_rational::BigRational;
 use num_traits::{One, Signed, Zero};
 
@@ -30,53 +30,8 @@ pub use topology::{
     CompiledFlow, FlowSpec, FlowTopology, ProcessDefinition, Rationing, StockDefinition,
 };
 
-/// Identifies one stored quantity.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct StockId(String);
-
-impl StockId {
-    /// Creates a nonblank stock identifier.
-    pub fn new(value: impl Into<String>) -> Result<Self, IdentifierError> {
-        let value = value.into();
-        nonblank(&value)?;
-        Ok(Self(value))
-    }
-
-    /// Returns the identifier text.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for StockId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(formatter)
-    }
-}
-
-/// Identifies the process proposing a flow.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct ProcessId(String);
-
-impl ProcessId {
-    /// Creates a nonblank process identifier.
-    pub fn new(value: impl Into<String>) -> Result<Self, IdentifierError> {
-        let value = value.into();
-        nonblank(&value)?;
-        Ok(Self(value))
-    }
-
-    /// Returns the identifier text.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for ProcessId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(formatter)
-    }
-}
+identifier!(StockId, "Identifies one stored quantity.");
+identifier!(ProcessId, "Identifies the process proposing a flow.");
 
 /// Declares one stock and its conserved kind.
 #[derive(Clone, Debug, Eq, PartialEq)]

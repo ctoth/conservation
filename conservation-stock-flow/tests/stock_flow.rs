@@ -7,13 +7,13 @@ use conservation_dynamics::{
     StockId,
 };
 use conservation_stock_flow::{
-    BoundaryCorrespondence, BoundaryId, BoundaryVerdict, ChannelId, ExactAmounts,
+    BoundaryCorrespondence, BoundaryId, BoundaryVerdict, CarrierError, ChannelId, ExactAmounts,
     FlowConstraintVerdict, FlowId, GradedStateLaw, LedgerDefinition, LedgerId,
     LinearFlowConstraint, OpenBalanceVerdict, SentenceId, StockAxisDefinition, StockFlowCarrier,
-    StockFlowError, StockFlowLawSuite, SuiteVerdict, TransitionEquation, TransitionRecord,
-    TransitionRecordData, TransitionTrace, TransitionVerdict, certify_nullspace,
-    check_boundary_correspondence, check_graded_state_law, check_linear_flow_constraint,
-    check_open_balance, check_transition_equation, derive_nullspace_basis,
+    StockFlowLawSuite, SuiteVerdict, TransitionEquation, TransitionRecord, TransitionRecordData,
+    TransitionTrace, TransitionVerdict, certify_nullspace, check_boundary_correspondence,
+    check_graded_state_law, check_linear_flow_constraint, check_open_balance,
+    check_transition_equation, derive_nullspace_basis,
 };
 use conservation_test_kinds::TestKind;
 use conservation_trace::{LawVerdict, LawViolation};
@@ -249,7 +249,7 @@ fn carrier_rejects_malformed_symbol_shapes_before_semantics() {
     ];
     assert!(matches!(
         StockFlowCarrier::new(topology.clone(), stock_axes.clone(), [], []),
-        Err(StockFlowError::ChannelCount {
+        Err(CarrierError::ChannelCount {
             expected: 4,
             actual: 0
         })
@@ -262,7 +262,7 @@ fn carrier_rejects_malformed_symbol_shapes_before_semantics() {
     ];
     assert!(matches!(
         StockFlowCarrier::new(topology.clone(), stock_axes.clone(), wrong_roles, []),
-        Err(StockFlowError::ChannelRole { .. })
+        Err(CarrierError::ChannelRole { .. })
     ));
     let duplicate = [
         ChannelId::Internal(flow("same")),
@@ -272,7 +272,7 @@ fn carrier_rejects_malformed_symbol_shapes_before_semantics() {
     ];
     assert!(matches!(
         StockFlowCarrier::new(topology, stock_axes, duplicate, []),
-        Err(StockFlowError::DuplicateFlow(id)) if id == flow("same")
+        Err(CarrierError::DuplicateFlow(id)) if id == flow("same")
     ));
 }
 
@@ -295,7 +295,7 @@ fn signed_observations_are_models_but_negative_flows_are_structural_errors() {
     .unwrap();
     assert_eq!(
         TransitionRecord::new(&carrier, negative),
-        Err(StockFlowError::NegativeAmount(
+        Err(CarrierError::NegativeAmount(
             conservation_stock_flow::SymbolId::Flow(flow("f1"))
         ))
     );
@@ -308,7 +308,7 @@ fn records_reject_missing_extra_wrong_kind_and_over_settled_values() {
     missing.before = ExactAmounts::new([(axis("A"), TestKind::Material, q(10))]).unwrap();
     assert!(matches!(
         TransitionRecord::new(&carrier, missing),
-        Err(StockFlowError::MissingValue { .. })
+        Err(CarrierError::MissingValue { .. })
     ));
 
     let mut extra = record_data([10, 0], [10, 3]);
@@ -320,7 +320,7 @@ fn records_reject_missing_extra_wrong_kind_and_over_settled_values() {
     .unwrap();
     assert!(matches!(
         TransitionRecord::new(&carrier, extra),
-        Err(StockFlowError::ExtraValue { .. })
+        Err(CarrierError::ExtraValue { .. })
     ));
 
     let mut wrong_kind = record_data([10, 0], [10, 3]);
@@ -331,14 +331,14 @@ fn records_reject_missing_extra_wrong_kind_and_over_settled_values() {
     .unwrap();
     assert!(matches!(
         TransitionRecord::new(&carrier, wrong_kind),
-        Err(StockFlowError::KindMismatch { .. })
+        Err(CarrierError::KindMismatch { .. })
     ));
 
     let mut over = record_data([10, 0], [10, 3]);
     over.requested_internal = internals(1, 1);
     assert!(matches!(
         TransitionRecord::new(&carrier, over),
-        Err(StockFlowError::SettledExceedsRequested { .. })
+        Err(CarrierError::SettledExceedsRequested { .. })
     ));
 }
 
@@ -352,7 +352,7 @@ fn traces_own_independent_records_and_reject_discontinuity() {
     let second = TransitionRecord::new(&carrier, second_data).unwrap();
     assert!(matches!(
         TransitionTrace::new(carrier.clone(), vec![first, second]),
-        Err(StockFlowError::DiscontinuousState {
+        Err(CarrierError::DiscontinuousState {
             transition: 1,
             axis: got_axis,
         }) if got_axis == axis("A")
@@ -396,7 +396,7 @@ fn empty_trace_is_structural_and_misrouting_reports_first_canonical_axis() {
     let empty = TransitionTrace::new(carrier, vec![]).unwrap();
     assert_eq!(
         check_transition_equation(&TransitionEquation::new(sentence("transition")), &empty),
-        Err(StockFlowError::TooShort { transitions: 0 })
+        Err(CarrierError::TooShort { transitions: 0 })
     );
 
     let trace = trace_with([9, 4]);
@@ -542,7 +542,7 @@ fn checked_certificates_recompute_nullspace_and_seal_incidence_provenance() {
     let carrier = carrier(false);
     assert!(matches!(
         certify_nullspace(&carrier, TestKind::Material, [(axis("A"), q(1))],),
-        Err(StockFlowError::NonNullCertificate { .. })
+        Err(CarrierError::NonNullCertificate { .. })
     ));
     assert!(matches!(
         certify_nullspace(
@@ -550,7 +550,7 @@ fn checked_certificates_recompute_nullspace_and_seal_incidence_provenance() {
             TestKind::Material,
             [(axis("A"), q(1)), (axis("A"), q(-1))],
         ),
-        Err(StockFlowError::BalanceLaw(_))
+        Err(CarrierError::BalanceLaw(_))
     ));
 
     let incidence = certify_nullspace(
