@@ -68,11 +68,9 @@ impl<K: Kind> FlowTopology<K> {
             .map(|(flow, (requested, applied))| AppliedFlow {
                 process: self.processes()[flow.process()].clone(),
                 kind: self.kinds()[flow.kind()].difference(),
-                source: flow.source().map(|index| self.stocks()[index].clone()),
-                target: flow.target().map(|index| self.stocks()[index].clone()),
+                ends: flow.ends().map(|index| self.stocks()[*index].clone()),
                 requested: requested.clone(),
                 applied: applied.clone(),
-                role: flow.role(),
             })
             .collect();
         Ok(SettlementReport { applied })

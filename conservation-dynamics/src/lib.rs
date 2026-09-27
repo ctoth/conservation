@@ -42,6 +42,62 @@ pub enum FlowRole {
     Output,
 }
 
+/// A flow's endpoints. Each role carries exactly the stocks it has, so a flow
+/// with neither source nor target cannot be written. `S` names a stock: a
+/// topology index or a [`StockId`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Ends<S> {
+    /// From outside the modeled boundary into `target`.
+    Input { target: S },
+    /// From `source` to `target`, both within the boundary.
+    Transfer { source: S, target: S },
+    /// From `source` out of the modeled boundary.
+    Output { source: S },
+}
+
+impl<S> Ends<S> {
+    /// The stock the amount leaves, absent for an input.
+    pub fn source(&self) -> Option<&S> {
+        match self {
+            Self::Input { .. } => None,
+            Self::Transfer { source, .. } | Self::Output { source } => Some(source),
+        }
+    }
+
+    /// The stock the amount enters, absent for an output.
+    pub fn target(&self) -> Option<&S> {
+        match self {
+            Self::Output { .. } => None,
+            Self::Input { target } | Self::Transfer { target, .. } => Some(target),
+        }
+    }
+
+    /// The boundary role these endpoints give the flow.
+    pub fn role(&self) -> FlowRole {
+        match self {
+            Self::Input { .. } => FlowRole::Input,
+            Self::Transfer { .. } => FlowRole::Transfer,
+            Self::Output { .. } => FlowRole::Output,
+        }
+    }
+
+    /// The same endpoints, each stock named another way.
+    pub fn map<T>(&self, mut name: impl FnMut(&S) -> T) -> Ends<T> {
+        match self {
+            Self::Input { target } => Ends::Input {
+                target: name(target),
+            },
+            Self::Transfer { source, target } => Ends::Transfer {
+                source: name(source),
+                target: name(target),
+            },
+            Self::Output { source } => Ends::Output {
+                source: name(source),
+            },
+        }
+    }
+}
+
 /// An exact flow after simultaneous resource limitation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AppliedFlow<K> {
@@ -49,16 +105,12 @@ pub struct AppliedFlow<K> {
     pub process: ProcessId,
     /// The kind of the amount moved: the endpoint stocks' `kind.difference()`.
     pub kind: K,
-    /// Source stock, absent for an input.
-    pub source: Option<StockId>,
-    /// Target stock, absent for an output.
-    pub target: Option<StockId>,
+    /// The stocks the flow leaves and enters.
+    pub ends: Ends<StockId>,
     /// Requested amount before limitation.
     pub requested: BigRational,
     /// Amount actually settled.
     pub applied: BigRational,
-    /// Boundary role of the flow.
-    pub role: FlowRole,
 }
 
 /// Result of one atomic settlement batch.
@@ -91,7 +143,7 @@ pub enum StockFlowError<K> {
     NoStocks,
     /// The same stock identifier was declared twice.
     DuplicateStock(StockId),
-    /// A flow has neither source nor target.
+    /// A flow spec names neither source nor target.
     DisconnectedFlow,
     /// A transfer names the same source and target.
     SameStock(StockId),

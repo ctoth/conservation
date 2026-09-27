@@ -13,12 +13,12 @@ use std::sync::Arc;
 
 use conservation_core::{AxisId, BalanceLaw, BalanceLawError, GradedLaw, Kind, identifier};
 use conservation_dynamics::{
-    CompiledSettlementReport, FlowRole, FlowTopology, StockFlowError, StockId,
+    CompiledSettlementReport, Ends, FlowRole, FlowTopology, StockFlowError, StockId,
 };
 use conservation_linear::{MatrixError, NullspaceSource, TransitionMatrix, derive_left_nullspace};
 use conservation_trace::{LawVerdict, TraceError, TraceState, TraceStateError, check_law};
 use num_rational::BigRational;
-use num_traits::{Signed, Zero};
+use num_traits::{One, Signed, Zero};
 
 identifier!(FlowId, "Identifies one scalar internal-flow channel.");
 identifier!(BoundaryId, "Identifies one scalar boundary-flow channel.");
@@ -147,22 +147,31 @@ impl<C, K: Kind> ExactEffectMatrix<C, K>
 where
     C: Clone + Ord,
 {
-    fn new(
-        rows: BTreeMap<AxisId, K>,
-        columns: BTreeMap<C, K>,
-        entry: impl Fn(&AxisId, &C) -> BigRational,
-    ) -> Self {
-        let entries = rows
+    /// The incidence matrix of `columns`: each column is −1 on its source axis,
+    /// +1 on its target axis and exact zero on every other row.
+    fn new(rows: BTreeMap<AxisId, K>, columns: &BTreeMap<C, Column<K>>) -> Self {
+        let mut entries = rows
             .keys()
             .flat_map(|axis| {
                 columns
                     .keys()
-                    .map(|column| ((axis.clone(), column.clone()), entry(axis, column)))
+                    .map(|column| ((axis.clone(), column.clone()), BigRational::zero()))
             })
-            .collect();
+            .collect::<BTreeMap<_, _>>();
+        for (id, column) in columns {
+            if let Some(source) = column.ends.source() {
+                entries.insert((source.clone(), id.clone()), -BigRational::one());
+            }
+            if let Some(target) = column.ends.target() {
+                entries.insert((target.clone(), id.clone()), BigRational::one());
+            }
+        }
         Self {
             rows,
-            columns,
+            columns: columns
+                .iter()
+                .map(|(id, column)| (id.clone(), column.kind))
+                .collect(),
             entries,
         }
     }
@@ -224,18 +233,12 @@ impl<K: Kind> CarrierIdentity<K> {
     }
 }
 
+/// One compiled flow slot as a matrix column: the kind it moves and the
+/// axes of the stocks it leaves and enters.
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct InternalColumn<K> {
+struct Column<K> {
     kind: K,
-    source: AxisId,
-    target: AxisId,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct BoundaryColumn<K> {
-    kind: K,
-    stock: AxisId,
-    role: FlowRole,
+    ends: Ends<AxisId>,
 }
 
 /// Immutable exact stock-flow carrier compiled over the settlement topology.
@@ -244,8 +247,8 @@ pub struct StockFlowCarrier<K> {
     topology: Arc<FlowTopology<K>>,
     identity: CarrierIdentity<K>,
     axes_by_stock: BTreeMap<StockId, AxisId>,
-    internal: BTreeMap<FlowId, InternalColumn<K>>,
-    boundaries: BTreeMap<BoundaryId, BoundaryColumn<K>>,
+    internal: BTreeMap<FlowId, Column<K>>,
+    boundaries: BTreeMap<BoundaryId, Column<K>>,
     slot_channels: Vec<ChannelId>,
 }
 
@@ -604,66 +607,36 @@ impl<K: Kind> StockFlowCarrier<K> {
         let mut boundaries = BTreeMap::new();
         let mut boundary_roles = BTreeMap::new();
         for (flow, channel) in topology.flows().iter().zip(&channels) {
-            let kind = topology.kinds()[flow.kind()];
-            match (flow.role(), channel) {
-                (FlowRole::Transfer, ChannelId::Internal(id)) => {
-                    let column = InternalColumn {
-                        kind,
-                        source: axes_by_stock[&topology.stocks()[flow.source().unwrap()]].clone(),
-                        target: axes_by_stock[&topology.stocks()[flow.target().unwrap()]].clone(),
-                    };
+            let column = Column {
+                kind: topology.kinds()[flow.kind()],
+                ends: flow
+                    .ends()
+                    .map(|stock| axes_by_stock[&topology.stocks()[*stock]].clone()),
+            };
+            match (flow.ends(), channel) {
+                (Ends::Transfer { .. }, ChannelId::Internal(id)) => {
                     if internal.insert(id.clone(), column).is_some() {
                         return Err(CarrierError::DuplicateFlow(id.clone()));
                     }
                 }
-                (FlowRole::Input | FlowRole::Output, ChannelId::Boundary(id)) => {
-                    let stock = flow.source().or(flow.target()).unwrap();
-                    let column = BoundaryColumn {
-                        kind,
-                        stock: axes_by_stock[&topology.stocks()[stock]].clone(),
-                        role: flow.role(),
-                    };
+                (Ends::Input { .. } | Ends::Output { .. }, ChannelId::Boundary(id)) => {
+                    let role = column.ends.role();
                     if boundaries.insert(id.clone(), column).is_some() {
                         return Err(CarrierError::DuplicateBoundary(id.clone()));
                     }
-                    boundary_roles.insert(id.clone(), flow.role());
+                    boundary_roles.insert(id.clone(), role);
                 }
-                (actual, channel) => {
+                (ends, channel) => {
                     return Err(CarrierError::ChannelRole {
                         channel: channel.clone(),
-                        actual,
+                        actual: ends.role(),
                     });
                 }
             }
         }
 
-        let internal_kinds = internal
-            .iter()
-            .map(|(id, column)| (id.clone(), column.kind))
-            .collect();
-        let boundary_kinds = boundaries
-            .iter()
-            .map(|(id, column)| (id.clone(), column.kind))
-            .collect();
-        let internal_effects =
-            ExactEffectMatrix::new(rows.clone(), internal_kinds, |axis, flow| {
-                match &internal[flow] {
-                    column if axis == &column.source => -BigRational::from_integer(1.into()),
-                    column if axis == &column.target => BigRational::from_integer(1.into()),
-                    _ => BigRational::zero(),
-                }
-            });
-        let boundary_effects = ExactEffectMatrix::new(rows, boundary_kinds, |axis, boundary| {
-            match &boundaries[boundary] {
-                column if axis == &column.stock && column.role == FlowRole::Input => {
-                    BigRational::from_integer(1.into())
-                }
-                column if axis == &column.stock && column.role == FlowRole::Output => {
-                    -BigRational::from_integer(1.into())
-                }
-                _ => BigRational::zero(),
-            }
-        });
+        let internal_effects = ExactEffectMatrix::new(rows.clone(), &internal);
+        let boundary_effects = ExactEffectMatrix::new(rows, &boundaries);
 
         let known_kinds = topology.kinds().iter().copied().collect::<BTreeSet<_>>();
         let mut ledger_map = BTreeMap::new();
@@ -692,9 +665,10 @@ impl<K: Kind> StockFlowCarrier<K> {
                         boundary_kind: column.kind,
                     });
                 }
+                let column_role = column.ends.role();
                 if role
-                    .replace(column.role)
-                    .is_some_and(|prior| prior != column.role)
+                    .replace(column_role)
+                    .is_some_and(|prior| prior != column_role)
                 {
                     return Err(CarrierError::MixedBoundaryRoles);
                 }

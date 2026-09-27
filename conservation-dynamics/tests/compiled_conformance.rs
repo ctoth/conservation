@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use conservation_dynamics::{
-    AppliedFlow, DenseState, DenseTolerance, ExactState, FlowRole, FlowSpec, FlowTopology,
+    AppliedFlow, DenseState, DenseTolerance, Ends, ExactState, FlowRole, FlowSpec, FlowTopology,
     ProcessDefinition, ProcessId, Rationing, StockDefinition, StockFlowError, StockId,
 };
 use conservation_test_kinds::TestKind;
@@ -100,6 +100,13 @@ fn compilation_assigns_stable_stock_kind_process_and_endpoint_indices() {
     assert_eq!(topology.flows()[1].source(), Some(0));
     assert_eq!(topology.flows()[1].target(), Some(1));
     assert_eq!(topology.flows()[1].role(), FlowRole::Transfer);
+    assert_eq!(
+        topology.flows()[1].ends(),
+        Ends::Transfer {
+            source: 0,
+            target: 1
+        }
+    );
     assert_eq!(topology.flows()[2].role(), FlowRole::Output);
 }
 
@@ -478,22 +485,23 @@ fn materialized_exact_report_names_every_settled_flow() {
     let materialized = topology.materialize_exact_report(&report).unwrap();
 
     // The input arrives after the batch, so `a` holds 10 for 8 + 12: scale 1/2.
-    let applied =
-        |name, source: Option<&str>, target: Option<&str>, requested, applied, role| AppliedFlow {
-            process: process(name),
-            kind: TestKind::Material,
-            source: source.map(stock),
-            target: target.map(stock),
-            requested: integer(requested),
-            applied: integer(applied),
-            role,
-        };
+    let applied = |name, ends: Ends<&str>, requested, applied| AppliedFlow {
+        process: process(name),
+        kind: TestKind::Material,
+        ends: ends.map(|name| stock(name)),
+        requested: integer(requested),
+        applied: integer(applied),
+    };
+    let transfer = Ends::Transfer {
+        source: "a",
+        target: "b",
+    };
     assert_eq!(
         materialized.flows(),
         &[
-            applied("input", None, Some("a"), 3, 3, FlowRole::Input),
-            applied("move", Some("a"), Some("b"), 8, 4, FlowRole::Transfer),
-            applied("export", Some("a"), None, 12, 6, FlowRole::Output),
+            applied("input", Ends::Input { target: "a" }, 3, 3),
+            applied("move", transfer, 8, 4),
+            applied("export", Ends::Output { source: "a" }, 12, 6),
         ]
     );
     assert_eq!(materialized.applied_by(&process("move")), integer(4));

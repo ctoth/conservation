@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use conservation_core::Kind;
 
-use crate::{FlowRole, ProcessId, StockFlowError, StockId};
+use crate::{Ends, FlowRole, ProcessId, StockFlowError, StockId};
 
 /// What settlement does when a batch would take a floored stock below its
 /// kind's floor. Declared once per process.
@@ -52,9 +52,7 @@ pub struct FlowSpec<K> {
 pub struct CompiledFlow {
     process: usize,
     kind: usize,
-    source: Option<usize>,
-    target: Option<usize>,
-    role: FlowRole,
+    ends: Ends<usize>,
 }
 
 impl CompiledFlow {
@@ -68,19 +66,24 @@ impl CompiledFlow {
         self.kind
     }
 
+    /// Endpoint stock indices, resolved during compilation.
+    pub fn ends(&self) -> Ends<usize> {
+        self.ends
+    }
+
     /// Source stock index, absent for a boundary input.
     pub fn source(&self) -> Option<usize> {
-        self.source
+        self.ends.source().copied()
     }
 
     /// Target stock index, absent for a boundary output.
     pub fn target(&self) -> Option<usize> {
-        self.target
+        self.ends.target().copied()
     }
 
-    /// Boundary role determined during compilation.
+    /// Boundary role of the flow's endpoints.
     pub fn role(&self) -> FlowRole {
-        self.role
+        self.ends.role()
     }
 }
 
@@ -147,9 +150,6 @@ impl<K: Kind> FlowTopology<K> {
         let mut process_indices = BTreeMap::new();
         let mut compiled = Vec::new();
         for flow in flows {
-            if flow.source.is_none() && flow.target.is_none() {
-                return Err(StockFlowError::DisconnectedFlow);
-            }
             let source = resolve_stock(
                 flow.source.as_ref(),
                 flow.kind,
@@ -164,8 +164,8 @@ impl<K: Kind> FlowTopology<K> {
                 &stock_kinds,
                 &kinds,
             )?;
-            let (role, endpoint) = match (source, target) {
-                (None, None) => unreachable!("disconnected flows were rejected before resolution"),
+            let ends = match (source, target) {
+                (None, None) => return Err(StockFlowError::DisconnectedFlow),
                 (Some(source), Some(target)) if source == target => {
                     return Err(StockFlowError::SameStock(stock_ids[source].clone()));
                 }
@@ -177,11 +177,16 @@ impl<K: Kind> FlowTopology<K> {
                         target_kind: kinds[stock_kinds[target]],
                     });
                 }
-                (None, Some(target)) => (FlowRole::Input, target),
-                (Some(source), None) => (FlowRole::Output, source),
-                (Some(source), Some(_)) => (FlowRole::Transfer, source),
+                (None, Some(target)) => Ends::Input { target },
+                (Some(source), None) => Ends::Output { source },
+                (Some(source), Some(target)) => Ends::Transfer { source, target },
             };
-            let kind = stock_kinds[endpoint];
+            // A transfer's two stocks were just checked to share one kind.
+            let kind = match ends {
+                Ends::Input { target: stock }
+                | Ends::Output { source: stock }
+                | Ends::Transfer { source: stock, .. } => stock_kinds[stock],
+            };
             let process = match process_indices.get(&flow.process) {
                 Some(index) => *index,
                 None => {
@@ -194,9 +199,7 @@ impl<K: Kind> FlowTopology<K> {
             compiled.push(CompiledFlow {
                 process,
                 kind,
-                source,
-                target,
-                role,
+                ends,
             });
         }
 
