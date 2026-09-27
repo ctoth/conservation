@@ -272,6 +272,46 @@ fn heat_content_law(body_kind: BridgmanKind, left: Expr, right: Expr) -> Law<Bri
 }
 
 #[test]
+fn an_enthalpy_capacity_maximum_is_refused_beside_mass_times_specific_energy() {
+    let (mass, specific_energy) = (kind("mass"), kind("specific_energy"));
+    let weighted = |maximum_kind| {
+        let mut declaration = model(vec![supply_law("mass-supply", mass)]);
+        declaration.capacities.insert(
+            "heat".into(),
+            conservation_exchange::Capacity {
+                maximum: Quantity::new(rational(100), maximum_kind),
+            },
+        );
+        let engine = Engine::new(declaration).unwrap();
+        let mut sack = stock("sack", mass);
+        sack.capacities.insert(
+            "heat".into(),
+            Quantity::new(rational(4186), specific_energy),
+        );
+        engine.prepare(
+            withdrawal(
+                "sack-supply",
+                sack,
+                "mass-supply",
+                Quantity::new(rational(1), mass),
+            ),
+            vec![],
+        )
+    };
+    assert!(weighted(kind("energy")).is_ok());
+    assert_eq!(
+        weighted(kind("enthalpy")).err(),
+        Some(Error::PointKind {
+            context: DimensionContext::Capacity {
+                capacity: "heat".into(),
+                stock: "sack".into(),
+            },
+            kind: kind("enthalpy"),
+        })
+    );
+}
+
+#[test]
 fn an_enthalpy_slot_is_refused_beside_mass_times_specific_energy() {
     let content = || {
         Expr::after("mass").product(Expr::constant(Quantity::new(

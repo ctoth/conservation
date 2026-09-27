@@ -256,6 +256,44 @@ fn capacity_uses_whole_result_and_rejects_without_losing_inputs() {
     assert_eq!(engine.snapshot().unwrap(), before);
 }
 
+/// Creates stock `fuel` carrying `weight` against a capacity `heat` whose
+/// maximum has `maximum_kind`.
+fn weighted_fuel(maximum_kind: TestKind, weight: Quantity) -> Result<Prepared<TestKind>, Error> {
+    let mut declaration = model();
+    declaration.capacities.insert(
+        "heat".into(),
+        Capacity {
+            maximum: quantity(100, maximum_kind),
+        },
+    );
+    let engine = Engine::new(declaration).unwrap();
+    let mut fuel = spec("fuel");
+    fuel.capacities.insert("heat".into(), weight);
+    let mut proposal = Exchange::new("supply-fuel", "supply");
+    proposal.bindings.insert("stock".into(), "fuel".into());
+    proposal.deltas.insert("stock".into(), q(1));
+    proposal.boundaries.insert("supply".into(), q(1));
+    proposal.creates.push(fuel);
+    engine.prepare(proposal, vec![])
+}
+
+#[test]
+fn a_point_kind_capacity_maximum_is_refused() {
+    let weight = || quantity(3, TestKind::EnergyPerMaterial);
+    assert!(weighted_fuel(TestKind::Energy, weight()).is_ok());
+    // Enthalpy has energy's dimensions, but it is a point kind.
+    assert_eq!(
+        weighted_fuel(TestKind::Enthalpy, weight()).err(),
+        Some(Error::PointKind {
+            context: DimensionContext::Capacity {
+                capacity: "heat".into(),
+                stock: "fuel".into(),
+            },
+            kind: TestKind::Enthalpy,
+        })
+    );
+}
+
 /// A clone of the `supply` law under another id, with `kind` for slot and boundary.
 fn supply_law(id: &str, kind: TestKind) -> Law<TestKind> {
     let mut law = model().laws[0].clone();
