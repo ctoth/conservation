@@ -1738,7 +1738,7 @@ impl<K: Kind> CheckedNullspace<K> {
                         return Err(CarrierError::IncompatibleLedgerCoefficient(ledger_id));
                     }
                     None => ledger_coefficient = Some(coefficient.clone()),
-                    _ => {}
+                    Some(_) => {}
                 }
             }
             if let Some(coefficient) = ledger_coefficient {
