@@ -284,10 +284,9 @@ fn an_enthalpy_capacity_maximum_is_refused_beside_mass_times_specific_energy() {
         );
         let engine = Engine::new(declaration).unwrap();
         let mut sack = stock("sack", mass);
-        sack.capacities.insert(
-            "heat".into(),
-            Quantity::new(rational(4186), specific_energy),
-        );
+        // One unit of mass weighs 1 against a maximum of 100: the load fits.
+        sack.capacities
+            .insert("heat".into(), Quantity::new(rational(1), specific_energy));
         engine.prepare(
             withdrawal(
                 "sack-supply",
