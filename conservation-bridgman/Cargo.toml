@@ -10,7 +10,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
-bridgman-core = { git = "https://github.com/ctoth/bridgman.git", rev = "ea8977312ddc94ec0c0e6d1082b203759c3a7f96" }
+bridgman-core = { git = "https://github.com/ctoth/bridgman.git", rev = "bec15f81b062ec320e7a993f4923747e970a125f" }
 conservation-core = { path = "../conservation-core" }
 num-rational.workspace = true
 

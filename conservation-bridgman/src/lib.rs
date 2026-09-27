@@ -322,8 +322,8 @@ impl DimensionAlgebra for BridgmanKind {
     fn dimensions(self) -> KindDimensions {
         let operand = &self.admitted().operand;
         KindDimensions {
-            dimensions: operand.dimensions.clone(),
-            grade: operand.grade,
+            dimensions: operand.graded.dimensions.clone(),
+            grade: operand.graded.grade,
             point: matches!(operand.role, AffineRole::Point),
         }
     }
