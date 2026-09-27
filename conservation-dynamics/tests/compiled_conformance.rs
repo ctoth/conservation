@@ -920,6 +920,52 @@ fn cooling_trace_does_not_depend_on_the_enthalpy_reference() {
 }
 
 #[test]
+fn a_point_kind_is_never_summed() {
+    let topology = Arc::new(
+        FlowTopology::new(
+            [
+                definition("kettle", TestKind::Enthalpy),
+                definition("room", TestKind::Enthalpy),
+            ],
+            [flow(
+                "conduction",
+                TestKind::Heat,
+                Some("kettle"),
+                Some("room"),
+            )],
+            [],
+        )
+        .unwrap(),
+    );
+    let mut exact = ExactState::new(topology.clone(), vec![integer(500), integer(100)]).unwrap();
+    let mut dense = DenseState::new(topology, vec![500.0, 100.0]).unwrap();
+    exact.settle(&[integer(600)]).unwrap();
+    dense.settle(&[600.0]).unwrap();
+    // Settlement moves heat between enthalpy points; their values do not add.
+    assert_eq!(exact.amounts(), &[integer(-100), integer(700)]);
+    assert_eq!(dense.amounts(), &[-100.0, 700.0]);
+
+    let refused = StockFlowError::PointSum {
+        kind: TestKind::Enthalpy,
+    };
+    assert_eq!(exact.total(TestKind::Enthalpy), Err(refused.clone()));
+    assert_eq!(
+        exact.balance_residual(TestKind::Enthalpy),
+        Err(refused.clone())
+    );
+    assert_eq!(dense.total(TestKind::Enthalpy), Err(refused.clone()));
+    assert_eq!(
+        dense.balance_residual(TestKind::Enthalpy),
+        Err(refused.clone())
+    );
+    assert_eq!(
+        dense.balance_within(TestKind::Enthalpy, DenseTolerance::default()),
+        Err(refused.clone())
+    );
+    assert!(refused.to_string().contains("enthalpy"));
+}
+
+#[test]
 fn signed_stock_settles_from_plus_two_to_minus_three_through_one_flow() {
     let (mut exact, mut dense) = exact_and_dense(
         &[

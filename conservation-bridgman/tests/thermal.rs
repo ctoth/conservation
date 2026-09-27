@@ -130,8 +130,10 @@ fn enthalpy_stock_runs_through_dynamics() {
     );
     assert_eq!(state.amount(&kettle), Some(&rational(-100)));
     assert_eq!(state.amount(&room), Some(&rational(700)));
-    assert_eq!(state.total(enthalpy), rational(600));
-    assert_eq!(state.balance_residual(enthalpy), rational(0));
+    // Enthalpy is a point kind: its values do not sum, through Bridgman's role.
+    let refused = StockFlowError::PointSum { kind: enthalpy };
+    assert_eq!(state.total(enthalpy), Err(refused.clone()));
+    assert_eq!(state.balance_residual(enthalpy), Err(refused));
     assert!(matches!(
         conducting(enthalpy),
         Err(StockFlowError::KindMismatch { stock_kind, flow_kind, .. })
