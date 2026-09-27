@@ -490,7 +490,53 @@ impl<K: Kind> fmt::Display for CarrierError<K> {
     }
 }
 
-impl<K: Kind> Error for CarrierError<K> {}
+impl<K: Kind + 'static> Error for CarrierError<K> {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Settlement(error) => Some(error),
+            Self::TraceState(error) => Some(error),
+            Self::Trace(error) => Some(error),
+            Self::Matrix(error) => Some(error),
+            Self::BalanceLaw(error) => Some(error),
+            Self::StockAxisCount { .. }
+            | Self::DuplicateStock(..)
+            | Self::DuplicateAxis(..)
+            | Self::UnknownStock(..)
+            | Self::ChannelCount { .. }
+            | Self::DuplicateFlow(..)
+            | Self::DuplicateBoundary(..)
+            | Self::ChannelRole { .. }
+            | Self::DuplicateLedger(..)
+            | Self::UnknownKind(..)
+            | Self::DuplicateValue(..)
+            | Self::NegativeAmount(..)
+            | Self::MissingValue { .. }
+            | Self::ExtraValue { .. }
+            | Self::KindMismatch { .. }
+            | Self::SettledExceedsRequested { .. }
+            | Self::CarrierMismatch
+            | Self::AmountCount { .. }
+            | Self::DiscontinuousState { .. }
+            | Self::DiscontinuousLedger { .. }
+            | Self::TooShort { .. }
+            | Self::UnknownFlow(..)
+            | Self::UnknownAxis(..)
+            | Self::UnknownBoundary(..)
+            | Self::UnknownLedger(..)
+            | Self::EmptyConstraint
+            | Self::EmptyBoundaryMapping
+            | Self::DuplicateBoundaryMapping(..)
+            | Self::MixedBoundaryRoles
+            | Self::SentenceKindMismatch { .. }
+            | Self::LedgerBoundaryKindMismatch { .. }
+            | Self::NonNullCertificate { .. }
+            | Self::UncoveredBoundary(..)
+            | Self::DuplicateBoundaryCoverage(..)
+            | Self::IncompatibleLedgerCoefficient(..)
+            | Self::DuplicateSentence(..) => None,
+        }
+    }
+}
 
 impl<K: Kind> From<StockFlowError<K>> for CarrierError<K> {
     fn from(error: StockFlowError<K>) -> Self {
