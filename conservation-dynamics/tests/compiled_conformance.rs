@@ -2,9 +2,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use conservation_dynamics::{
-    DenseState, DenseTolerance, ExactState, FlowRole, FlowSpec, FlowTopology, ProcessDefinition,
-    ProcessId, ProposedFlow, Rationing, StockDefinition, StockFlowError, StockFlowSystem, StockId,
-    StockSpec,
+    AppliedFlow, DenseState, DenseTolerance, Ends, ExactState, FlowRole, FlowSpec, FlowTopology,
+    ProcessDefinition, ProcessId, Rationing, StockDefinition, StockFlowError, StockId,
 };
 use conservation_test_kinds::TestKind;
 use num_bigint::BigInt;
@@ -86,21 +85,6 @@ fn material_topology() -> Arc<FlowTopology<TestKind>> {
     )
 }
 
-fn proposal(
-    process_name: &str,
-    source: Option<&str>,
-    target: Option<&str>,
-    amount: BigRational,
-) -> ProposedFlow<TestKind> {
-    ProposedFlow {
-        process: process(process_name),
-        kind: TestKind::Material,
-        source: source.map(stock),
-        target: target.map(stock),
-        amount,
-    }
-}
-
 #[test]
 fn compilation_assigns_stable_stock_kind_process_and_endpoint_indices() {
     let topology = material_topology();
@@ -116,6 +100,13 @@ fn compilation_assigns_stable_stock_kind_process_and_endpoint_indices() {
     assert_eq!(topology.flows()[1].source(), Some(0));
     assert_eq!(topology.flows()[1].target(), Some(1));
     assert_eq!(topology.flows()[1].role(), FlowRole::Transfer);
+    assert_eq!(
+        topology.flows()[1].ends(),
+        Ends::Transfer {
+            source: 0,
+            target: 1
+        }
+    );
     assert_eq!(topology.flows()[2].role(), FlowRole::Output);
 }
 
@@ -461,7 +452,10 @@ fn dense_tracks_the_exact_reference_across_repeated_batches() {
         exact.outputs(TestKind::Material).to_f64().unwrap(),
         dense.outputs(TestKind::Material)
     ));
-    assert!(dense.balance_within(TestKind::Material, tolerance));
+    assert_eq!(
+        dense.balance_within(TestKind::Material, tolerance),
+        Ok(true)
+    );
 }
 
 #[test]
@@ -485,53 +479,39 @@ fn dense_discard_path_matches_owned_reports_and_remains_atomic() {
 }
 
 #[test]
-fn compiled_exact_state_agrees_with_the_independent_legacy_settlement_path() {
+fn materialized_exact_report_names_every_settled_flow() {
     let topology = material_topology();
-    let mut compiled = ExactState::new(topology.clone(), vec![integer(10), integer(0)]).unwrap();
-    let mut legacy = StockFlowSystem::new(
-        [
-            StockSpec {
-                id: stock("a"),
-                kind: TestKind::Material,
-                initial: integer(10),
-            },
-            StockSpec {
-                id: stock("b"),
-                kind: TestKind::Material,
-                initial: integer(0),
-            },
-        ],
-        [
-            declare("input", Rationing::Ration),
-            declare("move", Rationing::Ration),
-            declare("export", Rationing::Ration),
-        ],
-    )
-    .unwrap();
-
-    let compiled_report = compiled
+    let mut state = ExactState::new(topology.clone(), vec![integer(10), integer(0)]).unwrap();
+    let report = state
         .settle(&[integer(3), integer(8), integer(12)])
         .unwrap();
-    let legacy_report = legacy
-        .settle(&[
-            proposal("input", None, Some("a"), integer(3)),
-            proposal("move", Some("a"), Some("b"), integer(8)),
-            proposal("export", Some("a"), None, integer(12)),
-        ])
-        .unwrap();
-    let materialized = topology.materialize_exact_report(&compiled_report).unwrap();
+    let materialized = topology.materialize_exact_report(&report).unwrap();
 
-    assert_eq!(materialized, legacy_report);
-    assert_eq!(compiled.amount(&stock("a")), legacy.amount(&stock("a")));
-    assert_eq!(compiled.amount(&stock("b")), legacy.amount(&stock("b")));
+    // The input arrives after the batch, so `a` holds 10 for 8 + 12: scale 1/2.
+    let applied = |name, ends: Ends<&str>, requested, applied| AppliedFlow {
+        process: process(name),
+        kind: TestKind::Material,
+        ends: ends.map(|name| stock(name)),
+        requested: integer(requested),
+        applied: integer(applied),
+    };
+    let transfer = Ends::Transfer {
+        source: "a",
+        target: "b",
+    };
     assert_eq!(
-        compiled.inputs(TestKind::Material),
-        legacy.inputs(TestKind::Material)
+        materialized.flows(),
+        &[
+            applied("input", Ends::Input { target: "a" }, 3, 3),
+            applied("move", transfer, 8, 4),
+            applied("export", Ends::Output { source: "a" }, 12, 6),
+        ]
     );
-    assert_eq!(
-        compiled.outputs(TestKind::Material),
-        legacy.outputs(TestKind::Material)
-    );
+    assert_eq!(materialized.applied_by(&process("move")), integer(4));
+    assert_eq!(state.amount(&stock("a")), Some(&integer(3)));
+    assert_eq!(state.amount(&stock("b")), Some(&integer(4)));
+    assert_eq!(state.inputs(TestKind::Material), integer(3));
+    assert_eq!(state.outputs(TestKind::Material), integer(6));
 }
 
 #[test]
@@ -608,8 +588,11 @@ fn each_conserved_kind_balances_independently() {
     dense.settle(&[7.0, 3.0, 4.0, 6.0]).unwrap();
 
     for conserved_kind in [TestKind::Matter, TestKind::Energy] {
-        assert!(exact.balance_residual(conserved_kind).is_zero());
-        assert!(DenseTolerance::default().contains(dense.balance_residual(conserved_kind), 0.0));
+        assert!(exact.balance_residual(conserved_kind).unwrap().is_zero());
+        assert!(
+            DenseTolerance::default()
+                .contains(dense.balance_residual(conserved_kind).unwrap(), 0.0)
+        );
     }
 }
 
@@ -745,7 +728,10 @@ fn dense_settles_a_valid_eleven_thousand_way_proportional_batch() {
     );
     assert!(DenseTolerance::default().contains(state.amount(&stock("source")).unwrap(), 0.0));
     assert!(DenseTolerance::default().contains(state.amount(&stock("target")).unwrap(), 1.0));
-    assert!(state.balance_within(TestKind::Material, DenseTolerance::default()));
+    assert_eq!(
+        state.balance_within(TestKind::Material, DenseTolerance::default()),
+        Ok(true)
+    );
 }
 
 #[test]
@@ -805,16 +791,25 @@ fn dense_balance_diagnostics_do_not_overflow_on_cancelling_maxima() {
     let mut state = DenseState::new(topology, vec![f64::MAX]).unwrap();
     state.settle(&[f64::MAX, f64::MAX]).unwrap();
 
-    assert_eq!(state.balance_residual(TestKind::Material), 0.0);
-    assert!(state.balance_within(TestKind::Material, DenseTolerance::default()));
-    assert!(!state.balance_within(TestKind::Charge, DenseTolerance::default()));
-    assert!(!state.balance_within(
-        TestKind::Material,
-        DenseTolerance {
-            absolute: f64::NAN,
-            relative: 0.0,
-        }
-    ));
+    assert_eq!(state.balance_residual(TestKind::Material), Ok(0.0));
+    assert_eq!(
+        state.balance_within(TestKind::Material, DenseTolerance::default()),
+        Ok(true)
+    );
+    assert_eq!(
+        state.balance_within(TestKind::Charge, DenseTolerance::default()),
+        Ok(false)
+    );
+    assert_eq!(
+        state.balance_within(
+            TestKind::Material,
+            DenseTolerance {
+                absolute: f64::NAN,
+                relative: 0.0,
+            }
+        ),
+        Ok(false)
+    );
 }
 
 #[test]
@@ -878,9 +873,17 @@ fn floorless_stock_starts_negative_and_settles_below_zero_in_both_backends() {
 
     assert_eq!(exact.amounts(), &[integer(-7)]);
     assert_eq!(dense.amounts(), &[-7.0]);
-    assert!(exact.balance_residual(TestKind::MaterialBalance).is_zero());
-    assert_eq!(dense.balance_residual(TestKind::MaterialBalance), 0.0);
-    assert!(dense.balance_within(TestKind::MaterialBalance, DenseTolerance::default()));
+    assert!(
+        exact
+            .balance_residual(TestKind::MaterialBalance)
+            .unwrap()
+            .is_zero()
+    );
+    assert_eq!(dense.balance_residual(TestKind::MaterialBalance), Ok(0.0));
+    assert_eq!(
+        dense.balance_within(TestKind::MaterialBalance, DenseTolerance::default()),
+        Ok(true)
+    );
 }
 
 #[test]
@@ -943,6 +946,52 @@ fn cooling_trace_does_not_depend_on_the_enthalpy_reference() {
 }
 
 #[test]
+fn a_point_kind_is_never_summed() {
+    let topology = Arc::new(
+        FlowTopology::new(
+            [
+                definition("kettle", TestKind::Enthalpy),
+                definition("room", TestKind::Enthalpy),
+            ],
+            [flow(
+                "conduction",
+                TestKind::Heat,
+                Some("kettle"),
+                Some("room"),
+            )],
+            [],
+        )
+        .unwrap(),
+    );
+    let mut exact = ExactState::new(topology.clone(), vec![integer(500), integer(100)]).unwrap();
+    let mut dense = DenseState::new(topology, vec![500.0, 100.0]).unwrap();
+    exact.settle(&[integer(600)]).unwrap();
+    dense.settle(&[600.0]).unwrap();
+    // Settlement moves heat between enthalpy points; their values do not add.
+    assert_eq!(exact.amounts(), &[integer(-100), integer(700)]);
+    assert_eq!(dense.amounts(), &[-100.0, 700.0]);
+
+    let refused = StockFlowError::PointSum {
+        kind: TestKind::Enthalpy,
+    };
+    assert_eq!(exact.total(TestKind::Enthalpy), Err(refused.clone()));
+    assert_eq!(
+        exact.balance_residual(TestKind::Enthalpy),
+        Err(refused.clone())
+    );
+    assert_eq!(dense.total(TestKind::Enthalpy), Err(refused.clone()));
+    assert_eq!(
+        dense.balance_residual(TestKind::Enthalpy),
+        Err(refused.clone())
+    );
+    assert_eq!(
+        dense.balance_within(TestKind::Enthalpy, DenseTolerance::default()),
+        Err(refused.clone())
+    );
+    assert!(refused.to_string().contains("enthalpy"));
+}
+
+#[test]
 fn signed_stock_settles_from_plus_two_to_minus_three_through_one_flow() {
     let (mut exact, mut dense) = exact_and_dense(
         &[
@@ -964,8 +1013,13 @@ fn signed_stock_settles_from_plus_two_to_minus_three_through_one_flow() {
 
     assert_eq!(exact.amounts(), &[integer(-3), integer(5)]);
     assert_eq!(dense.amounts(), &[-3.0, 5.0]);
-    assert!(exact.balance_residual(TestKind::MaterialBalance).is_zero());
-    assert_eq!(dense.balance_residual(TestKind::MaterialBalance), 0.0);
+    assert!(
+        exact
+            .balance_residual(TestKind::MaterialBalance)
+            .unwrap()
+            .is_zero()
+    );
+    assert_eq!(dense.balance_residual(TestKind::MaterialBalance), Ok(0.0));
 }
 
 fn below_floor(
@@ -1000,28 +1054,6 @@ fn withdrawal_below_floor_is_refused_naming_stock_floor_and_process() {
     assert_eq!(dense.settle(&[5.0]), Err(expected.clone()));
     assert_eq!(exact, exact_before);
     assert_eq!(dense, dense_before);
-
-    let mut system = StockFlowSystem::new(
-        [StockSpec {
-            id: stock("vault"),
-            kind: TestKind::Reserve,
-            initial: integer(12),
-        }],
-        [],
-    )
-    .unwrap();
-    let system_before = system.clone();
-    assert_eq!(
-        system.settle(&[ProposedFlow {
-            process: process("spend"),
-            kind: TestKind::Reserve,
-            source: Some(stock("vault")),
-            target: None,
-            amount: integer(5),
-        }]),
-        Err(expected.clone())
-    );
-    assert_eq!(system, system_before);
 
     let message = expected.to_string();
     for part in ["vault", "10", "spend"] {
@@ -1137,20 +1169,6 @@ fn process_declarations_reject_unknown_and_duplicate_processes() {
         ),
         Err(StockFlowError::DuplicateProcess(process("move")))
     );
-    assert_eq!(
-        StockFlowSystem::new(
-            [StockSpec {
-                id: stock("a"),
-                kind: TestKind::Material,
-                initial: integer(0),
-            }],
-            [
-                declare("move", Rationing::Ration),
-                declare("move", Rationing::Ration)
-            ]
-        ),
-        Err(StockFlowError::DuplicateProcess(process("move")))
-    );
 }
 
 #[test]
@@ -1187,18 +1205,7 @@ fn initial_amount_below_the_floor_is_rejected_naming_stock_and_floor() {
         ExactState::new(topology.clone(), vec![integer(9)]),
         Err(expected.clone())
     );
-    assert_eq!(DenseState::new(topology, vec![9.0]), Err(expected.clone()));
-    assert_eq!(
-        StockFlowSystem::new(
-            [StockSpec {
-                id: stock("vault"),
-                kind: TestKind::Reserve,
-                initial: integer(9),
-            }],
-            [],
-        ),
-        Err(expected)
-    );
+    assert_eq!(DenseState::new(topology, vec![9.0]), Err(expected));
 }
 
 proptest! {
@@ -1237,8 +1244,8 @@ proptest! {
                 for (exact_amount, dense_amount) in exact_report.applied().iter().zip(dense_report.applied()) {
                     prop_assert!(tolerance.contains(exact_amount.to_f64().unwrap(), *dense_amount));
                 }
-                prop_assert!(exact.balance_residual(TestKind::Reserve).is_zero());
-                prop_assert!(dense.balance_within(TestKind::Reserve, tolerance));
+                prop_assert!(exact.balance_residual(TestKind::Reserve).unwrap().is_zero());
+                prop_assert_eq!(dense.balance_within(TestKind::Reserve, tolerance), Ok(true));
             }
             (exact_result, dense_result) => {
                 prop_assert!(false, "exact {exact_result:?} but dense {dense_result:?}");
@@ -1269,7 +1276,7 @@ proptest! {
             prop_assert!(amount.is_finite());
             prop_assert!(*amount >= 0.0);
         }
-        prop_assert!(dense.balance_within(TestKind::Material, tolerance));
+        prop_assert_eq!(dense.balance_within(TestKind::Material, tolerance), Ok(true));
         for (exact_amount, dense_amount) in exact.amounts().iter().zip(dense.amounts()) {
             prop_assert!(tolerance.contains(exact_amount.to_f64().unwrap(), *dense_amount));
         }
@@ -1277,6 +1284,6 @@ proptest! {
             prop_assert!(tolerance.contains(exact_amount.to_f64().unwrap(), *dense_amount));
         }
         prop_assert!(exact.amounts().iter().all(|amount| !amount.is_negative()));
-        prop_assert!(exact.balance_residual(TestKind::Material).is_zero());
+        prop_assert!(exact.balance_residual(TestKind::Material).unwrap().is_zero());
     }
 }

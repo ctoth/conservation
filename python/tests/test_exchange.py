@@ -222,6 +222,19 @@ def test_invalid_model_and_snapshot_fail_loudly() -> None:
         ce.Engine.restore(b'{"version": 999}', REGISTRY)
 
 
+def test_point_kind_beside_a_derived_quantity_raises_dimension_error() -> None:
+    temperature = REGISTRY.kind("temperature")
+    delta = temperature.difference
+    assert delta is not None and delta.dimensions == temperature.dimensions
+    derived = ce.Expr.constant(ce.Quantity("1", delta)).product(ce.Expr.constant(ce.Quantity("1", RATIO)))
+    point = ce.Law("warming", {"body": temperature}, [ce.Constraint("heat", ce.Expr.after("body"), derived)])
+    with pytest.raises(ce.DimensionError, match="PointKind") as error:
+        ce.Engine({"owner"}, [point])
+    assert "temperature" in str(error.value)
+    difference = ce.Law("warming", {"body": temperature}, [ce.Constraint("heat", ce.Expr.delta("body"), derived)])
+    ce.Engine({"owner"}, [difference])
+
+
 def test_registry_resolves_names_and_rejects_unknown_by_name() -> None:
     assert REGISTRY.kind("material").name == "material"
     assert REGISTRY.kind("material") == MATERIAL

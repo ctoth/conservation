@@ -13,9 +13,39 @@ use num_traits::Zero;
 
 static ZERO: LazyLock<BigRational> = LazyLock::new(BigRational::zero);
 
-/// Identifies one coordinate of a quantitative state.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct AxisId(String);
+/// Declares a nonblank string identifier type: `identifier!(Name, "doc")`.
+/// The one declaration of what an identifier is; every identifier type in the
+/// workspace is made by it.
+#[macro_export]
+macro_rules! identifier {
+    ($name:ident, $doc:literal) => {
+        #[doc = $doc]
+        #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        pub struct $name(String);
+
+        impl $name {
+            /// Creates a nonblank identifier.
+            pub fn new(value: impl Into<String>) -> Result<Self, $crate::IdentifierError> {
+                let value = value.into();
+                $crate::nonblank(&value)?;
+                Ok(Self(value))
+            }
+
+            /// Returns the identifier text.
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
+
+        impl ::std::fmt::Display for $name {
+            fn fmt(&self, formatter: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                self.0.fmt(formatter)
+            }
+        }
+    };
+}
+
+identifier!(AxisId, "Identifies one coordinate of a quantitative state.");
 
 /// An error constructing a typed identifier.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -72,23 +102,59 @@ pub trait Kind: Copy + Eq + Ord + Hash + fmt::Debug + fmt::Display {
 }
 
 /// Dimensional comparison, product and quotient. Only conservation-exchange requires it.
+///
+/// A product reads its factors: a kind, which the implementation may refuse (a
+/// point kind, for one), or the dimensions of another product. What it yields,
+/// and what is compared, are dimensions alone.
 pub trait DimensionAlgebra: Kind {
-    /// A kind's dimensions. Equality is dimensional comparison.
+    /// What is compared: a kind's dimensions, or a product's. Equality is
+    /// dimensional comparison and says nothing of affine role.
     type Dimensions: Clone + Eq + fmt::Debug + fmt::Display;
-    /// Why a product or quotient has no representation (for example exponent overflow).
+    /// Why a product or quotient is refused or has no representation.
     type AlgebraError: Error + Clone + Eq;
     /// Returns this kind's dimensions.
     fn dimensions(self) -> Self::Dimensions;
-    /// Returns the dimensions of a product.
+    /// Returns the dimensions of `left · right`.
     fn product(
-        left: &Self::Dimensions,
-        right: &Self::Dimensions,
+        left: &Factor<Self>,
+        right: &Factor<Self>,
     ) -> Result<Self::Dimensions, Self::AlgebraError>;
-    /// Returns the dimensions of a quotient.
+    /// Returns the dimensions of `left / right`.
     fn quotient(
-        left: &Self::Dimensions,
-        right: &Self::Dimensions,
+        left: &Factor<Self>,
+        right: &Factor<Self>,
     ) -> Result<Self::Dimensions, Self::AlgebraError>;
+}
+
+/// A factor of a product or quotient, and the type of an expression over
+/// kinds: a declared kind, or the dimensions a product derived, which have no
+/// kind of their own.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Factor<K: DimensionAlgebra> {
+    /// A declared kind.
+    Kind(K),
+    /// The dimensions of a product or quotient.
+    Derived(K::Dimensions),
+}
+
+impl<K: DimensionAlgebra> Factor<K> {
+    /// The factor's dimensions.
+    pub fn dimensions(&self) -> K::Dimensions {
+        match self {
+            Self::Kind(kind) => kind.dimensions(),
+            Self::Derived(dimensions) => dimensions.clone(),
+        }
+    }
+}
+
+impl<K: DimensionAlgebra> fmt::Display for Factor<K> {
+    /// A kind by its name; derived dimensions as they display.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Kind(kind) => fmt::Display::fmt(kind, formatter),
+            Self::Derived(dimensions) => fmt::Display::fmt(dimensions, formatter),
+        }
+    }
 }
 
 /// Resolves kind names once, at a document or foreign-language boundary.
@@ -97,26 +163,6 @@ pub trait KindRegistry {
     type Kind: Kind;
     /// The handle whose `Display` is `name`, if the registry declares it.
     fn resolve(&self, name: &str) -> Option<Self::Kind>;
-}
-
-impl AxisId {
-    /// Creates an axis identifier.
-    pub fn new(value: impl Into<String>) -> Result<Self, IdentifierError> {
-        let value = value.into();
-        nonblank(&value)?;
-        Ok(Self(value))
-    }
-
-    /// Returns the identifier text.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for AxisId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(formatter)
-    }
 }
 
 /// Records an asserted origin for a conservation law.

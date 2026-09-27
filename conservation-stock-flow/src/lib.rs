@@ -11,44 +11,14 @@ use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 
-use conservation_core::{
-    AxisId, BalanceLaw, BalanceLawError, GradedLaw, IdentifierError, Kind, nonblank,
-};
+use conservation_core::{AxisId, BalanceLaw, BalanceLawError, GradedLaw, Kind, identifier};
 use conservation_dynamics::{
-    CompiledSettlementReport, FlowRole, FlowTopology, StockFlowError as DynamicsError, StockId,
+    CompiledSettlementReport, Ends, FlowRole, FlowTopology, StockFlowError, StockId,
 };
 use conservation_linear::{MatrixError, NullspaceSource, TransitionMatrix, derive_left_nullspace};
 use conservation_trace::{LawVerdict, TraceError, TraceState, TraceStateError, check_law};
 use num_rational::BigRational;
-use num_traits::{Signed, Zero};
-
-macro_rules! identifier {
-    ($name:ident, $doc:literal) => {
-        #[doc = $doc]
-        #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-        pub struct $name(String);
-
-        impl $name {
-            /// Creates a nonblank identifier.
-            pub fn new(value: impl Into<String>) -> Result<Self, IdentifierError> {
-                let value = value.into();
-                nonblank(&value)?;
-                Ok(Self(value))
-            }
-
-            /// Returns the identifier text.
-            pub fn as_str(&self) -> &str {
-                &self.0
-            }
-        }
-
-        impl fmt::Display for $name {
-            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                self.0.fmt(formatter)
-            }
-        }
-    };
-}
+use num_traits::{One, Signed, Zero};
 
 identifier!(FlowId, "Identifies one scalar internal-flow channel.");
 identifier!(BoundaryId, "Identifies one scalar boundary-flow channel.");
@@ -177,22 +147,31 @@ impl<C, K: Kind> ExactEffectMatrix<C, K>
 where
     C: Clone + Ord,
 {
-    fn new(
-        rows: BTreeMap<AxisId, K>,
-        columns: BTreeMap<C, K>,
-        entry: impl Fn(&AxisId, &C) -> BigRational,
-    ) -> Self {
-        let entries = rows
+    /// The incidence matrix of `columns`: each column is −1 on its source axis,
+    /// +1 on its target axis and exact zero on every other row.
+    fn new(rows: BTreeMap<AxisId, K>, columns: &BTreeMap<C, Column<K>>) -> Self {
+        let mut entries = rows
             .keys()
             .flat_map(|axis| {
                 columns
                     .keys()
-                    .map(|column| ((axis.clone(), column.clone()), entry(axis, column)))
+                    .map(|column| ((axis.clone(), column.clone()), BigRational::zero()))
             })
-            .collect();
+            .collect::<BTreeMap<_, _>>();
+        for (id, column) in columns {
+            if let Some(source) = column.ends.source() {
+                entries.insert((source.clone(), id.clone()), -BigRational::one());
+            }
+            if let Some(target) = column.ends.target() {
+                entries.insert((target.clone(), id.clone()), BigRational::one());
+            }
+        }
         Self {
             rows,
-            columns,
+            columns: columns
+                .iter()
+                .map(|(id, column)| (id.clone(), column.kind))
+                .collect(),
             entries,
         }
     }
@@ -254,18 +233,12 @@ impl<K: Kind> CarrierIdentity<K> {
     }
 }
 
+/// One compiled flow slot as a matrix column: the kind it moves and the
+/// axes of the stocks it leaves and enters.
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct InternalColumn<K> {
+struct Column<K> {
     kind: K,
-    source: AxisId,
-    target: AxisId,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct BoundaryColumn<K> {
-    kind: K,
-    stock: AxisId,
-    role: FlowRole,
+    ends: Ends<AxisId>,
 }
 
 /// Immutable exact stock-flow carrier compiled over the settlement topology.
@@ -274,15 +247,15 @@ pub struct StockFlowCarrier<K> {
     topology: Arc<FlowTopology<K>>,
     identity: CarrierIdentity<K>,
     axes_by_stock: BTreeMap<StockId, AxisId>,
-    internal: BTreeMap<FlowId, InternalColumn<K>>,
-    boundaries: BTreeMap<BoundaryId, BoundaryColumn<K>>,
+    internal: BTreeMap<FlowId, Column<K>>,
+    boundaries: BTreeMap<BoundaryId, Column<K>>,
     slot_channels: Vec<ChannelId>,
 }
 
 /// Structural failure constructing or using an exact stock-flow carrier.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
-pub enum StockFlowError<K> {
+pub enum CarrierError<K> {
     /// Stock-axis declarations do not cover the topology exactly.
     StockAxisCount { expected: usize, actual: usize },
     /// A stock was assigned more than one axis.
@@ -336,7 +309,7 @@ pub enum StockFlowError<K> {
     /// Adjacent cumulative-ledger states are not continuous.
     DiscontinuousLedger { transition: usize, ledger: LedgerId },
     /// Existing settlement validation rejected a report.
-    Settlement(DynamicsError<K>),
+    Settlement(StockFlowError<K>),
     /// Projection into the existing exact trace carrier failed.
     TraceState(TraceStateError),
     /// A semantic checker cannot witness an empty transition trace.
@@ -392,7 +365,7 @@ pub enum StockFlowError<K> {
     DuplicateSentence(SentenceId),
 }
 
-impl<K: Kind> fmt::Display for StockFlowError<K> {
+impl<K: Kind> fmt::Display for CarrierError<K> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::StockAxisCount { expected, actual } => write!(
@@ -517,33 +490,79 @@ impl<K: Kind> fmt::Display for StockFlowError<K> {
     }
 }
 
-impl<K: Kind> Error for StockFlowError<K> {}
+impl<K: Kind + 'static> Error for CarrierError<K> {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Settlement(error) => Some(error),
+            Self::TraceState(error) => Some(error),
+            Self::Trace(error) => Some(error),
+            Self::Matrix(error) => Some(error),
+            Self::BalanceLaw(error) => Some(error),
+            Self::StockAxisCount { .. }
+            | Self::DuplicateStock(..)
+            | Self::DuplicateAxis(..)
+            | Self::UnknownStock(..)
+            | Self::ChannelCount { .. }
+            | Self::DuplicateFlow(..)
+            | Self::DuplicateBoundary(..)
+            | Self::ChannelRole { .. }
+            | Self::DuplicateLedger(..)
+            | Self::UnknownKind(..)
+            | Self::DuplicateValue(..)
+            | Self::NegativeAmount(..)
+            | Self::MissingValue { .. }
+            | Self::ExtraValue { .. }
+            | Self::KindMismatch { .. }
+            | Self::SettledExceedsRequested { .. }
+            | Self::CarrierMismatch
+            | Self::AmountCount { .. }
+            | Self::DiscontinuousState { .. }
+            | Self::DiscontinuousLedger { .. }
+            | Self::TooShort { .. }
+            | Self::UnknownFlow(..)
+            | Self::UnknownAxis(..)
+            | Self::UnknownBoundary(..)
+            | Self::UnknownLedger(..)
+            | Self::EmptyConstraint
+            | Self::EmptyBoundaryMapping
+            | Self::DuplicateBoundaryMapping(..)
+            | Self::MixedBoundaryRoles
+            | Self::SentenceKindMismatch { .. }
+            | Self::LedgerBoundaryKindMismatch { .. }
+            | Self::NonNullCertificate { .. }
+            | Self::UncoveredBoundary(..)
+            | Self::DuplicateBoundaryCoverage(..)
+            | Self::IncompatibleLedgerCoefficient(..)
+            | Self::DuplicateSentence(..) => None,
+        }
+    }
+}
 
-impl<K: Kind> From<DynamicsError<K>> for StockFlowError<K> {
-    fn from(error: DynamicsError<K>) -> Self {
+impl<K: Kind> From<StockFlowError<K>> for CarrierError<K> {
+    fn from(error: StockFlowError<K>) -> Self {
         Self::Settlement(error)
     }
 }
 
-impl<K: Kind> From<TraceStateError> for StockFlowError<K> {
+impl<K: Kind> From<TraceStateError> for CarrierError<K> {
     fn from(error: TraceStateError) -> Self {
         Self::TraceState(error)
     }
 }
 
-impl<K: Kind> From<TraceError> for StockFlowError<K> {
+impl<K: Kind> From<TraceError> for CarrierError<K> {
     fn from(error: TraceError) -> Self {
         Self::Trace(error)
     }
 }
 
-impl<K: Kind> From<MatrixError> for StockFlowError<K> {
+impl<K: Kind> From<MatrixError> for CarrierError<K> {
     fn from(error: MatrixError) -> Self {
         Self::Matrix(error)
     }
 }
 
-impl<K: Kind> From<BalanceLawError> for StockFlowError<K> {
+impl<K: Kind> From<BalanceLawError> for CarrierError<K> {
     fn from(error: BalanceLawError) -> Self {
         Self::BalanceLaw(error)
     }
@@ -586,10 +605,10 @@ impl<K: Kind> StockFlowCarrier<K> {
         stock_axes: impl IntoIterator<Item = StockAxisDefinition>,
         channels: impl IntoIterator<Item = ChannelId>,
         ledgers: impl IntoIterator<Item = LedgerDefinition<K>>,
-    ) -> Result<Self, StockFlowError<K>> {
+    ) -> Result<Self, CarrierError<K>> {
         let stock_axes = stock_axes.into_iter().collect::<Vec<_>>();
         if stock_axes.len() != topology.stocks().len() {
-            return Err(StockFlowError::StockAxisCount {
+            return Err(CarrierError::StockAxisCount {
                 expected: topology.stocks().len(),
                 actual: stock_axes.len(),
             });
@@ -600,23 +619,23 @@ impl<K: Kind> StockFlowCarrier<K> {
         let mut rows = BTreeMap::new();
         for definition in stock_axes {
             if !known_stocks.contains(&definition.stock) {
-                return Err(StockFlowError::UnknownStock(definition.stock));
+                return Err(CarrierError::UnknownStock(definition.stock));
             }
             if axes_by_stock
                 .insert(definition.stock.clone(), definition.axis.clone())
                 .is_some()
             {
-                return Err(StockFlowError::DuplicateStock(definition.stock));
+                return Err(CarrierError::DuplicateStock(definition.stock));
             }
             let kind = topology
                 .stock_kind_for(&definition.stock)
                 .expect("known topology stock has a kind");
             if rows.insert(definition.axis.clone(), kind).is_some() {
-                return Err(StockFlowError::DuplicateAxis(definition.axis));
+                return Err(CarrierError::DuplicateAxis(definition.axis));
             }
         }
         if axes_by_stock.len() != topology.stocks().len() {
-            return Err(StockFlowError::StockAxisCount {
+            return Err(CarrierError::StockAxisCount {
                 expected: topology.stocks().len(),
                 actual: axes_by_stock.len(),
             });
@@ -624,7 +643,7 @@ impl<K: Kind> StockFlowCarrier<K> {
 
         let channels = channels.into_iter().collect::<Vec<_>>();
         if channels.len() != topology.flows().len() {
-            return Err(StockFlowError::ChannelCount {
+            return Err(CarrierError::ChannelCount {
                 expected: topology.flows().len(),
                 actual: channels.len(),
             });
@@ -634,103 +653,74 @@ impl<K: Kind> StockFlowCarrier<K> {
         let mut boundaries = BTreeMap::new();
         let mut boundary_roles = BTreeMap::new();
         for (flow, channel) in topology.flows().iter().zip(&channels) {
-            let kind = topology.kinds()[flow.kind()];
-            match (flow.role(), channel) {
-                (FlowRole::Transfer, ChannelId::Internal(id)) => {
-                    let column = InternalColumn {
-                        kind,
-                        source: axes_by_stock[&topology.stocks()[flow.source().unwrap()]].clone(),
-                        target: axes_by_stock[&topology.stocks()[flow.target().unwrap()]].clone(),
-                    };
+            let column = Column {
+                kind: topology.kinds()[flow.kind()],
+                ends: flow
+                    .ends()
+                    .map(|stock| axes_by_stock[&topology.stocks()[*stock]].clone()),
+            };
+            match (flow.ends(), channel) {
+                (Ends::Transfer { .. }, ChannelId::Internal(id)) => {
                     if internal.insert(id.clone(), column).is_some() {
-                        return Err(StockFlowError::DuplicateFlow(id.clone()));
+                        return Err(CarrierError::DuplicateFlow(id.clone()));
                     }
                 }
-                (FlowRole::Input | FlowRole::Output, ChannelId::Boundary(id)) => {
-                    let stock = flow.source().or(flow.target()).unwrap();
-                    let column = BoundaryColumn {
-                        kind,
-                        stock: axes_by_stock[&topology.stocks()[stock]].clone(),
-                        role: flow.role(),
-                    };
+                (Ends::Input { .. } | Ends::Output { .. }, ChannelId::Boundary(id)) => {
+                    let role = column.ends.role();
                     if boundaries.insert(id.clone(), column).is_some() {
-                        return Err(StockFlowError::DuplicateBoundary(id.clone()));
+                        return Err(CarrierError::DuplicateBoundary(id.clone()));
                     }
-                    boundary_roles.insert(id.clone(), flow.role());
+                    boundary_roles.insert(id.clone(), role);
                 }
-                (actual, channel) => {
-                    return Err(StockFlowError::ChannelRole {
+                (ends, channel) => {
+                    return Err(CarrierError::ChannelRole {
                         channel: channel.clone(),
-                        actual,
+                        actual: ends.role(),
                     });
                 }
             }
         }
 
-        let internal_kinds = internal
-            .iter()
-            .map(|(id, column)| (id.clone(), column.kind))
-            .collect();
-        let boundary_kinds = boundaries
-            .iter()
-            .map(|(id, column)| (id.clone(), column.kind))
-            .collect();
-        let internal_effects =
-            ExactEffectMatrix::new(rows.clone(), internal_kinds, |axis, flow| {
-                match &internal[flow] {
-                    column if axis == &column.source => -BigRational::from_integer(1.into()),
-                    column if axis == &column.target => BigRational::from_integer(1.into()),
-                    _ => BigRational::zero(),
-                }
-            });
-        let boundary_effects = ExactEffectMatrix::new(rows, boundary_kinds, |axis, boundary| {
-            match &boundaries[boundary] {
-                column if axis == &column.stock && column.role == FlowRole::Input => {
-                    BigRational::from_integer(1.into())
-                }
-                column if axis == &column.stock && column.role == FlowRole::Output => {
-                    -BigRational::from_integer(1.into())
-                }
-                _ => BigRational::zero(),
-            }
-        });
+        let internal_effects = ExactEffectMatrix::new(rows.clone(), &internal);
+        let boundary_effects = ExactEffectMatrix::new(rows, &boundaries);
 
         let known_kinds = topology.kinds().iter().copied().collect::<BTreeSet<_>>();
         let mut ledger_map = BTreeMap::new();
         let mut used_axes = internal_effects.axes().cloned().collect::<BTreeSet<_>>();
         for ledger in ledgers {
             if !known_kinds.contains(&ledger.kind) {
-                return Err(StockFlowError::UnknownKind(ledger.kind));
+                return Err(CarrierError::UnknownKind(ledger.kind));
             }
             if ledger.boundaries.is_empty() {
-                return Err(StockFlowError::EmptyBoundaryMapping);
+                return Err(CarrierError::EmptyBoundaryMapping);
             }
             let mut mapped = BTreeSet::new();
             let mut role = None;
             for boundary in ledger.boundaries {
                 if !mapped.insert(boundary.clone()) {
-                    return Err(StockFlowError::DuplicateBoundaryMapping(boundary));
+                    return Err(CarrierError::DuplicateBoundaryMapping(boundary));
                 }
                 let Some(column) = boundaries.get(&boundary) else {
-                    return Err(StockFlowError::UnknownBoundary(boundary));
+                    return Err(CarrierError::UnknownBoundary(boundary));
                 };
                 if column.kind != ledger.kind {
-                    return Err(StockFlowError::LedgerBoundaryKindMismatch {
+                    return Err(CarrierError::LedgerBoundaryKindMismatch {
                         ledger: ledger.id,
                         boundary,
                         ledger_kind: ledger.kind,
                         boundary_kind: column.kind,
                     });
                 }
+                let column_role = column.ends.role();
                 if role
-                    .replace(column.role)
-                    .is_some_and(|prior| prior != column.role)
+                    .replace(column_role)
+                    .is_some_and(|prior| prior != column_role)
                 {
-                    return Err(StockFlowError::MixedBoundaryRoles);
+                    return Err(CarrierError::MixedBoundaryRoles);
                 }
             }
             if !used_axes.insert(ledger.axis.clone()) {
-                return Err(StockFlowError::DuplicateAxis(ledger.axis));
+                return Err(CarrierError::DuplicateAxis(ledger.axis));
             }
             if ledger_map
                 .insert(
@@ -743,7 +733,7 @@ impl<K: Kind> StockFlowCarrier<K> {
                 )
                 .is_some()
             {
-                return Err(StockFlowError::DuplicateLedger(ledger.id));
+                return Err(CarrierError::DuplicateLedger(ledger.id));
             }
         }
 
@@ -808,11 +798,11 @@ impl<K: Kind> StockFlowCarrier<K> {
         report: &CompiledSettlementReport<BigRational, K>,
         ledger_before: ExactAmounts<LedgerId, K>,
         ledger_after: ExactAmounts<LedgerId, K>,
-    ) -> Result<TransitionRecord<K>, StockFlowError<K>> {
+    ) -> Result<TransitionRecord<K>, CarrierError<K>> {
         self.topology.materialize_exact_report(report)?;
         for values in [before, after] {
             if values.len() != self.topology.stocks().len() {
-                return Err(StockFlowError::AmountCount {
+                return Err(CarrierError::AmountCount {
                     expected: self.topology.stocks().len(),
                     actual: values.len(),
                 });
@@ -885,11 +875,11 @@ where
     /// Constructs an exact vector, rejecting duplicate entries.
     pub fn new(
         values: impl IntoIterator<Item = (I, K, BigRational)>,
-    ) -> Result<Self, StockFlowError<K>> {
+    ) -> Result<Self, CarrierError<K>> {
         let mut canonical = BTreeMap::new();
         for (id, kind, amount) in values {
             if canonical.insert(id.clone(), (kind, amount)).is_some() {
-                return Err(StockFlowError::DuplicateValue(id.symbol_id()));
+                return Err(CarrierError::DuplicateValue(id.symbol_id()));
             }
         }
         Ok(Self { values: canonical })
@@ -956,7 +946,7 @@ impl<K: Kind> TransitionRecord<K> {
     pub fn new(
         carrier: &StockFlowCarrier<K>,
         data: TransitionRecordData<K>,
-    ) -> Result<Self, StockFlowError<K>> {
+    ) -> Result<Self, CarrierError<K>> {
         validate_values(
             &data.before,
             &carrier.identity.internal.rows,
@@ -1074,16 +1064,16 @@ impl<K: Kind> TransitionTrace<K> {
     pub fn new(
         carrier: Arc<StockFlowCarrier<K>>,
         records: Vec<TransitionRecord<K>>,
-    ) -> Result<Self, StockFlowError<K>> {
+    ) -> Result<Self, CarrierError<K>> {
         for record in &records {
             if record.carrier_identity() != carrier.identity() {
-                return Err(StockFlowError::CarrierMismatch);
+                return Err(CarrierError::CarrierMismatch);
             }
         }
         for (index, pair) in records.windows(2).enumerate() {
             for axis in carrier.identity.internal.axes() {
                 if pair[0].after().amount(axis) != pair[1].before().amount(axis) {
-                    return Err(StockFlowError::DiscontinuousState {
+                    return Err(CarrierError::DiscontinuousState {
                         transition: index + 1,
                         axis: axis.clone(),
                     });
@@ -1091,7 +1081,7 @@ impl<K: Kind> TransitionTrace<K> {
             }
             for ledger in carrier.identity.ledgers.keys() {
                 if pair[0].ledger_after().amount(ledger) != pair[1].ledger_before().amount(ledger) {
-                    return Err(StockFlowError::DiscontinuousLedger {
+                    return Err(CarrierError::DiscontinuousLedger {
                         transition: index + 1,
                         ledger: ledger.clone(),
                     });
@@ -1112,7 +1102,7 @@ impl<K: Kind> TransitionTrace<K> {
     }
 
     /// Projects stock and ledger states into the existing graded trace carrier.
-    pub fn graded_states(&self) -> Result<Vec<TraceState>, StockFlowError<K>> {
+    pub fn graded_states(&self) -> Result<Vec<TraceState>, CarrierError<K>> {
         let Some(first) = self.records.first() else {
             return Ok(Vec::new());
         };
@@ -1137,25 +1127,25 @@ fn validate_values<I, K: Kind>(
     actual: &ExactAmounts<I, K>,
     expected: &BTreeMap<I, K>,
     role: ValueRole,
-) -> Result<(), StockFlowError<K>>
+) -> Result<(), CarrierError<K>>
 where
     I: Symbol,
 {
     if let Some(id) = actual.values.keys().find(|id| !expected.contains_key(*id)) {
-        return Err(StockFlowError::ExtraValue {
+        return Err(CarrierError::ExtraValue {
             role,
             symbol: id.symbol_id(),
         });
     }
     for (id, expected_kind) in expected {
         let Some((actual_kind, _)) = actual.values.get(id) else {
-            return Err(StockFlowError::MissingValue {
+            return Err(CarrierError::MissingValue {
                 role,
                 symbol: id.symbol_id(),
             });
         };
         if actual_kind != expected_kind {
-            return Err(StockFlowError::KindMismatch {
+            return Err(CarrierError::KindMismatch {
                 role,
                 symbol: id.symbol_id(),
                 expected: *expected_kind,
@@ -1169,7 +1159,7 @@ where
 fn validate_settlement<I, K: Kind>(
     requested: &ExactAmounts<I, K>,
     settled: &ExactAmounts<I, K>,
-) -> Result<(), StockFlowError<K>>
+) -> Result<(), CarrierError<K>>
 where
     I: Symbol,
 {
@@ -1178,7 +1168,7 @@ where
             .amount(id)
             .expect("record shape was validated before settlement bounds");
         if amount > requested_amount {
-            return Err(StockFlowError::SettledExceedsRequested {
+            return Err(CarrierError::SettledExceedsRequested {
                 symbol: id.symbol_id(),
                 requested: Box::new(requested_amount.clone()),
                 settled: Box::new(amount.clone()),
@@ -1192,7 +1182,7 @@ fn project_state<K: Kind>(
     carrier: &StockFlowCarrier<K>,
     stocks: &ExactAmounts<AxisId, K>,
     ledgers: &ExactAmounts<LedgerId, K>,
-) -> Result<TraceState, StockFlowError<K>> {
+) -> Result<TraceState, CarrierError<K>> {
     let values = stocks
         .iter()
         .map(|(axis, _, amount)| (axis.clone(), amount.clone()))
@@ -1205,12 +1195,12 @@ fn project_state<K: Kind>(
     Ok(TraceState::new(values)?)
 }
 
-fn validate_nonnegative<I, K: Kind>(amounts: &ExactAmounts<I, K>) -> Result<(), StockFlowError<K>>
+fn validate_nonnegative<I, K: Kind>(amounts: &ExactAmounts<I, K>) -> Result<(), CarrierError<K>>
 where
     I: Symbol,
 {
     if let Some((id, _, _)) = amounts.iter().find(|(_, _, amount)| amount.is_negative()) {
-        return Err(StockFlowError::NegativeAmount(id.symbol_id()));
+        return Err(CarrierError::NegativeAmount(id.symbol_id()));
     }
     Ok(())
 }
@@ -1285,7 +1275,7 @@ impl<K: Kind> TransitionVerdict<K> {
 pub fn check_transition_equation<K: Kind>(
     sentence: &TransitionEquation,
     trace: &TransitionTrace<K>,
-) -> Result<TransitionVerdict<K>, StockFlowError<K>> {
+) -> Result<TransitionVerdict<K>, CarrierError<K>> {
     require_transitions(trace)?;
     let carrier = trace.carrier();
     for (transition, record) in trace.records.iter().enumerate() {
@@ -1348,14 +1338,14 @@ impl<K: Kind> LinearFlowConstraint<K> {
         kind: K,
         coefficients: impl IntoIterator<Item = (FlowId, BigRational)>,
         expected: BigRational,
-    ) -> Result<Self, StockFlowError<K>> {
+    ) -> Result<Self, CarrierError<K>> {
         let mut canonical = BTreeMap::<FlowId, BigRational>::new();
         for (flow, coefficient) in coefficients {
             *canonical.entry(flow).or_default() += coefficient;
         }
         canonical.retain(|_, coefficient| !coefficient.is_zero());
         if canonical.is_empty() {
-            return Err(StockFlowError::EmptyConstraint);
+            return Err(CarrierError::EmptyConstraint);
         }
         let sentence = Self {
             id,
@@ -1388,13 +1378,13 @@ impl<K: Kind> LinearFlowConstraint<K> {
     }
 
     /// Validates every referenced channel against a carrier.
-    pub fn validate(&self, carrier: &StockFlowCarrier<K>) -> Result<(), StockFlowError<K>> {
+    pub fn validate(&self, carrier: &StockFlowCarrier<K>) -> Result<(), CarrierError<K>> {
         for flow in self.coefficients.keys() {
             let Some(actual) = carrier.internal_effects().column_kind(flow) else {
-                return Err(StockFlowError::UnknownFlow(flow.clone()));
+                return Err(CarrierError::UnknownFlow(flow.clone()));
             };
             if actual != self.kind {
-                return Err(StockFlowError::SentenceKindMismatch {
+                return Err(CarrierError::SentenceKindMismatch {
                     sentence: self.id.clone(),
                     symbol: flow.symbol_id(),
                     expected: self.kind,
@@ -1450,7 +1440,7 @@ impl FlowConstraintVerdict {
 pub fn check_linear_flow_constraint<K: Kind>(
     sentence: &LinearFlowConstraint<K>,
     trace: &TransitionTrace<K>,
-) -> Result<FlowConstraintVerdict, StockFlowError<K>> {
+) -> Result<FlowConstraintVerdict, CarrierError<K>> {
     sentence.validate(trace.carrier())?;
     require_transitions(trace)?;
     for (transition, record) in trace.records.iter().enumerate() {
@@ -1504,10 +1494,10 @@ impl BoundaryCorrespondence {
     pub fn validate<'a, K: Kind>(
         &self,
         carrier: &'a StockFlowCarrier<K>,
-    ) -> Result<&'a LedgerIdentity<K>, StockFlowError<K>> {
+    ) -> Result<&'a LedgerIdentity<K>, CarrierError<K>> {
         carrier
             .ledger(&self.ledger)
-            .ok_or_else(|| StockFlowError::UnknownLedger(self.ledger.clone()))
+            .ok_or_else(|| CarrierError::UnknownLedger(self.ledger.clone()))
     }
 }
 
@@ -1565,7 +1555,7 @@ impl BoundaryVerdict {
 pub fn check_boundary_correspondence<K: Kind>(
     sentence: &BoundaryCorrespondence,
     trace: &TransitionTrace<K>,
-) -> Result<BoundaryVerdict, StockFlowError<K>> {
+) -> Result<BoundaryVerdict, CarrierError<K>> {
     let ledger = sentence.validate(trace.carrier())?;
     require_transitions(trace)?;
     let boundaries = ledger.boundaries.iter().cloned().collect::<Vec<_>>();
@@ -1622,7 +1612,7 @@ impl<K: Kind> GradedStateLaw<K> {
     }
 
     /// Validates every law axis and kind against stocks or projected ledgers.
-    pub fn validate(&self, carrier: &StockFlowCarrier<K>) -> Result<(), StockFlowError<K>> {
+    pub fn validate(&self, carrier: &StockFlowCarrier<K>) -> Result<(), CarrierError<K>> {
         for (axis, _) in self.law.form().coefficients() {
             let actual = carrier
                 .internal_effects()
@@ -1635,9 +1625,9 @@ impl<K: Kind> GradedStateLaw<K> {
                         .find(|ledger| &ledger.axis == axis)
                         .map(|ledger| ledger.kind)
                 })
-                .ok_or_else(|| StockFlowError::UnknownAxis(axis.clone()))?;
+                .ok_or_else(|| CarrierError::UnknownAxis(axis.clone()))?;
             if actual != self.law.form().kind() {
-                return Err(StockFlowError::SentenceKindMismatch {
+                return Err(CarrierError::SentenceKindMismatch {
                     sentence: self.id.clone(),
                     symbol: axis.symbol_id(),
                     expected: self.law.form().kind(),
@@ -1653,15 +1643,15 @@ impl<K: Kind> GradedStateLaw<K> {
 pub fn check_graded_state_law<K: Kind>(
     sentence: &GradedStateLaw<K>,
     trace: &TransitionTrace<K>,
-) -> Result<LawVerdict<K>, StockFlowError<K>> {
+) -> Result<LawVerdict<K>, CarrierError<K>> {
     sentence.validate(trace.carrier())?;
     require_transitions(trace)?;
     Ok(check_law(sentence.law(), &trace.graded_states()?)?)
 }
 
-fn require_transitions<K: Kind>(trace: &TransitionTrace<K>) -> Result<(), StockFlowError<K>> {
+fn require_transitions<K: Kind>(trace: &TransitionTrace<K>) -> Result<(), CarrierError<K>> {
     if trace.records.is_empty() {
-        Err(StockFlowError::TooShort { transitions: 0 })
+        Err(CarrierError::TooShort { transitions: 0 })
     } else {
         Ok(())
     }
@@ -1720,9 +1710,9 @@ impl<K: Kind> CheckedNullspace<K> {
         &self,
         carrier: &StockFlowCarrier<K>,
         selected_ledgers: impl IntoIterator<Item = LedgerId>,
-    ) -> Result<GradedLaw<K>, StockFlowError<K>> {
+    ) -> Result<GradedLaw<K>, CarrierError<K>> {
         if &self.carrier != carrier.identity() {
-            return Err(StockFlowError::CarrierMismatch);
+            return Err(CarrierError::CarrierMismatch);
         }
         let mut coefficients = self
             .law
@@ -1733,11 +1723,11 @@ impl<K: Kind> CheckedNullspace<K> {
         for ledger_id in selected_ledgers {
             let ledger = carrier
                 .ledger(&ledger_id)
-                .ok_or_else(|| StockFlowError::UnknownLedger(ledger_id.clone()))?;
+                .ok_or_else(|| CarrierError::UnknownLedger(ledger_id.clone()))?;
             let mut ledger_coefficient = None;
             for boundary in &ledger.boundaries {
                 if !covered.insert(boundary.clone()) {
-                    return Err(StockFlowError::DuplicateBoundaryCoverage(boundary.clone()));
+                    return Err(CarrierError::DuplicateBoundaryCoverage(boundary.clone()));
                 }
                 let coefficient = self
                     .boundary_coefficients
@@ -1745,10 +1735,10 @@ impl<K: Kind> CheckedNullspace<K> {
                     .expect("certificate covers carrier boundary");
                 match &ledger_coefficient {
                     Some(current) if current != coefficient => {
-                        return Err(StockFlowError::IncompatibleLedgerCoefficient(ledger_id));
+                        return Err(CarrierError::IncompatibleLedgerCoefficient(ledger_id));
                     }
                     None => ledger_coefficient = Some(coefficient.clone()),
-                    _ => {}
+                    Some(_) => {}
                 }
             }
             if let Some(coefficient) = ledger_coefficient {
@@ -1757,7 +1747,7 @@ impl<K: Kind> CheckedNullspace<K> {
         }
         for (boundary, coefficient) in &self.boundary_coefficients {
             if !coefficient.is_zero() && !covered.contains(boundary) {
-                return Err(StockFlowError::UncoveredBoundary(boundary.clone()));
+                return Err(CarrierError::UncoveredBoundary(boundary.clone()));
             }
         }
         Ok(GradedLaw::from(BalanceLaw::new(
@@ -1773,15 +1763,15 @@ pub fn certify_nullspace<K: Kind>(
     carrier: &StockFlowCarrier<K>,
     kind: K,
     coefficients: impl IntoIterator<Item = (AxisId, BigRational)>,
-) -> Result<CheckedNullspace<K>, StockFlowError<K>> {
+) -> Result<CheckedNullspace<K>, CarrierError<K>> {
     let source = NullspaceSource::Incidence;
     let coefficients = coefficients.into_iter().collect::<Vec<_>>();
     for (axis, _) in &coefficients {
         let Some(actual) = carrier.internal_effects().axis_kind(axis) else {
-            return Err(StockFlowError::UnknownAxis(axis.clone()));
+            return Err(CarrierError::UnknownAxis(axis.clone()));
         };
         if actual != kind {
-            return Err(StockFlowError::SentenceKindMismatch {
+            return Err(CarrierError::SentenceKindMismatch {
                 sentence: SentenceId::new("nullspace-certificate")
                     .expect("static certificate identifier is nonblank"),
                 symbol: axis.symbol_id(),
@@ -1804,7 +1794,7 @@ pub fn certify_nullspace<K: Kind>(
             })
             .sum::<BigRational>();
         if !residual.is_zero() {
-            return Err(StockFlowError::NonNullCertificate {
+            return Err(CarrierError::NonNullCertificate {
                 flow: flow.clone(),
                 residual: Box::new(residual),
             });
@@ -1841,7 +1831,7 @@ pub fn certify_nullspace<K: Kind>(
 pub fn derive_nullspace_basis<K: Kind>(
     carrier: &StockFlowCarrier<K>,
     kind: K,
-) -> Result<Vec<CheckedNullspace<K>>, StockFlowError<K>> {
+) -> Result<Vec<CheckedNullspace<K>>, CarrierError<K>> {
     let axes = carrier
         .internal_effects()
         .axes()
@@ -1849,7 +1839,7 @@ pub fn derive_nullspace_basis<K: Kind>(
         .cloned()
         .collect::<Vec<_>>();
     if axes.is_empty() {
-        return Err(StockFlowError::UnknownKind(kind));
+        return Err(CarrierError::UnknownKind(kind));
     }
     let flows = carrier
         .internal_effects()
@@ -1955,9 +1945,9 @@ impl<K: Kind> OpenBalanceVerdict<K> {
 pub fn check_open_balance<K: Kind>(
     sentence: &OpenBalance<K>,
     trace: &TransitionTrace<K>,
-) -> Result<OpenBalanceVerdict<K>, StockFlowError<K>> {
+) -> Result<OpenBalanceVerdict<K>, CarrierError<K>> {
     if &sentence.certificate.carrier != trace.carrier.identity() {
-        return Err(StockFlowError::CarrierMismatch);
+        return Err(CarrierError::CarrierMismatch);
     }
     require_transitions(trace)?;
     for (transition, record) in trace.records.iter().enumerate() {
@@ -2062,7 +2052,7 @@ impl<K: Kind> StockFlowLawSuite<K> {
         boundaries: impl IntoIterator<Item = BoundaryCorrespondence>,
         open_balances: impl IntoIterator<Item = OpenBalance<K>>,
         graded: impl IntoIterator<Item = GradedStateLaw<K>>,
-    ) -> Result<Self, StockFlowError<K>> {
+    ) -> Result<Self, CarrierError<K>> {
         let mut names = BTreeSet::new();
         if let Some(sentence) = &transition {
             names.insert(sentence.id.clone());
@@ -2084,7 +2074,7 @@ impl<K: Kind> StockFlowLawSuite<K> {
     pub fn check(
         &self,
         trace: &TransitionTrace<K>,
-    ) -> Result<Vec<SuiteVerdict<K>>, StockFlowError<K>> {
+    ) -> Result<Vec<SuiteVerdict<K>>, CarrierError<K>> {
         let mut verdicts = Vec::with_capacity(
             usize::from(self.transition.is_some())
                 + self.constraints.len()
@@ -2139,12 +2129,12 @@ fn collect_named<T, K: Kind>(
     values: impl IntoIterator<Item = T>,
     names: &mut BTreeSet<SentenceId>,
     id: impl Fn(&T) -> &SentenceId,
-) -> Result<BTreeMap<SentenceId, T>, StockFlowError<K>> {
+) -> Result<BTreeMap<SentenceId, T>, CarrierError<K>> {
     let mut collected = BTreeMap::new();
     for value in values {
         let sentence = id(&value).clone();
         if !names.insert(sentence.clone()) {
-            return Err(StockFlowError::DuplicateSentence(sentence));
+            return Err(CarrierError::DuplicateSentence(sentence));
         }
         collected.insert(sentence, value);
     }

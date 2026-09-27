@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use conservation_core::DimensionAlgebra;
+use conservation_core::{Affine, DimensionAlgebra, Factor};
 use num_rational::BigRational;
 use num_traits::{One, Signed, Zero};
 use serde::{Deserialize, Serialize};
@@ -22,52 +22,65 @@ pub enum Expr<K> {
     Quotient(Box<Expr<K>>, Box<Expr<K>>),
 }
 
-/// The type of an exchange expression: a declared kind, or dimensions computed by
-/// a product or quotient (which has no kind of its own).
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum ExprType<K: DimensionAlgebra> {
-    Kind(K),
-    Derived(K::Dimensions),
-}
-
-impl<K: DimensionAlgebra> ExprType<K> {
-    fn dimensions(&self) -> K::Dimensions {
-        match self {
-            Self::Kind(kind) => kind.dimensions(),
-            Self::Derived(dimensions) => dimensions.clone(),
+/// Requires two expression types (factors) to agree. Two kinds compare by
+/// identity; any comparison with a derived side is [`require_dimensions`].
+fn require_equal<K: DimensionAlgebra>(
+    left: &Factor<K>,
+    right: &Factor<K>,
+    kind_context: impl FnOnce() -> KindContext,
+    dimension_context: impl FnOnce() -> DimensionContext,
+) -> Result<(), Error<K>> {
+    match (left, right) {
+        (Factor::Kind(expected), Factor::Kind(found)) => {
+            if expected == found {
+                Ok(())
+            } else {
+                Err(Error::Kinds {
+                    context: kind_context(),
+                    expected: *expected,
+                    found: *found,
+                })
+            }
+        }
+        (Factor::Kind(_), Factor::Derived(_))
+        | (Factor::Derived(_), Factor::Kind(_))
+        | (Factor::Derived(_), Factor::Derived(_)) => {
+            require_dimensions(left, right, dimension_context)
         }
     }
+}
 
-    /// Two kinds compare by identity. A derived side has no kind, so any
-    /// comparison with one compares dimensions.
-    fn require_equal(
-        &self,
-        other: &Self,
-        kind_context: impl FnOnce() -> KindContext,
-        dimension_context: impl FnOnce() -> DimensionContext,
-    ) -> Result<(), Error<K>> {
-        match (self, other) {
-            (Self::Kind(expected), Self::Kind(found)) => {
-                if expected != found {
-                    return Err(Error::Kinds {
-                        context: kind_context(),
-                        expected: *expected,
-                        found: *found,
-                    });
-                }
-            }
-            _ => {
-                let (left, right) = (self.dimensions(), other.dimensions());
-                if left != right {
-                    return Err(Error::Dimensions {
-                        context: dimension_context(),
-                        left,
-                        right,
-                    });
-                }
-            }
-        }
+/// Requires two factors, at least one of them derived, to have equal
+/// dimensions. A derived side has no kind, and what a product yields is never a
+/// point, so a point kind on either side is refused first (by the kind's affine
+/// role, as totals refuse it), whatever the dimensions.
+pub(crate) fn require_dimensions<K: DimensionAlgebra>(
+    left: &Factor<K>,
+    right: &Factor<K>,
+    context: impl FnOnce() -> DimensionContext,
+) -> Result<(), Error<K>> {
+    let point = [left, right].into_iter().find_map(|side| match side {
+        Factor::Kind(kind) => match kind.affine() {
+            Affine::Point { .. } => Some(*kind),
+            Affine::Linear => None,
+        },
+        Factor::Derived(_) => None,
+    });
+    if let Some(kind) = point {
+        return Err(Error::PointKind {
+            context: context(),
+            kind,
+        });
+    }
+    let (left, right) = (left.dimensions(), right.dimensions());
+    if left == right {
         Ok(())
+    } else {
+        Err(Error::Dimensions {
+            context: context(),
+            left,
+            right,
+        })
     }
 }
 
@@ -110,7 +123,7 @@ impl<K: DimensionAlgebra> Expr<K> {
 
     /// Types the expression: leaves have declared kinds (a delta has its slot
     /// kind's difference), and products and quotients derive dimensions.
-    fn dimensions(&self, law: &Law<K>, depth: usize) -> Result<ExprType<K>, Error<K>> {
+    fn dimensions(&self, law: &Law<K>, depth: usize) -> Result<Factor<K>, Error<K>> {
         if depth > 64 {
             return Err(invalid("constraint expression nesting exceeds 64"));
         }
@@ -123,49 +136,49 @@ impl<K: DimensionAlgebra> Expr<K> {
         match self {
             Self::Constant(q) => {
                 q.validate()?;
-                Ok(ExprType::Kind(q.kind))
+                Ok(Factor::Kind(q.kind))
             }
-            Self::Before(id) | Self::After(id) => slot(id).map(ExprType::Kind),
-            Self::Delta(id) => slot(id).map(|kind| ExprType::Kind(kind.difference())),
+            Self::Before(id) | Self::After(id) => slot(id).map(Factor::Kind),
+            Self::Delta(id) => slot(id).map(|kind| Factor::Kind(kind.difference())),
             Self::Boundary(id) => law
                 .boundaries
                 .get(id)
                 .copied()
-                .map(ExprType::Kind)
+                .map(Factor::Kind)
                 .ok_or_else(|| invalid(format!("undeclared boundary {id}"))),
             Self::Fact(id) => law
                 .facts
                 .get(id)
-                .map(|fact| ExprType::Kind(fact.kind))
+                .map(|fact| Factor::Kind(fact.kind))
                 .ok_or_else(|| invalid(format!("undeclared fact {id}"))),
             Self::Sum(terms) => {
                 let first = terms
                     .first()
                     .ok_or_else(|| invalid("empty expression sum"))?
                     .dimensions(law, depth + 1)?;
-                let mut every_kind = matches!(first, ExprType::Kind(_));
+                let mut every_kind = matches!(first, Factor::Kind(_));
                 for term in &terms[1..] {
                     let term = term.dimensions(law, depth + 1)?;
-                    first.require_equal(&term, || KindContext::Sum, || DimensionContext::Sum)?;
-                    every_kind &= matches!(term, ExprType::Kind(_));
+                    require_equal(&first, &term, || KindContext::Sum, || DimensionContext::Sum)?;
+                    every_kind &= matches!(term, Factor::Kind(_));
                 }
                 Ok(if every_kind {
                     first
                 } else {
-                    ExprType::Derived(first.dimensions())
+                    Factor::Derived(first.dimensions())
                 })
             }
             Self::Product(a, b) => K::product(
-                &a.dimensions(law, depth + 1)?.dimensions(),
-                &b.dimensions(law, depth + 1)?.dimensions(),
+                &a.dimensions(law, depth + 1)?,
+                &b.dimensions(law, depth + 1)?,
             )
-            .map(ExprType::Derived)
+            .map(Factor::Derived)
             .map_err(Error::Algebra),
             Self::Quotient(a, b) => K::quotient(
-                &a.dimensions(law, depth + 1)?.dimensions(),
-                &b.dimensions(law, depth + 1)?.dimensions(),
+                &a.dimensions(law, depth + 1)?,
+                &b.dimensions(law, depth + 1)?,
             )
-            .map(ExprType::Derived)
+            .map(Factor::Derived)
             .map_err(Error::Algebra),
         }
     }
@@ -215,7 +228,7 @@ impl<K: DimensionAlgebra> Expr<K> {
                 a.coverage(result);
                 b.coverage(result);
             }
-            _ => {}
+            Self::Constant(_) | Self::Before(_) | Self::Fact(_) => {}
         }
     }
 }
@@ -253,7 +266,8 @@ impl<K: DimensionAlgebra> Constraint<K> {
     pub(crate) fn validate(&self, law: &Law<K>) -> Result<(), Error<K>> {
         let left = self.left.dimensions(law, 0)?;
         let right = self.right.dimensions(law, 0)?;
-        left.require_equal(
+        require_equal(
+            &left,
             &right,
             || KindContext::Constraint {
                 id: self.id.clone(),

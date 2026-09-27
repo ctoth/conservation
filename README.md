@@ -19,7 +19,9 @@ This Cargo workspace contains the following library crates:
   breach a kind's floor are refused, or share a common proportional limit above
   the floor when every withdrawing process is declared rationed; stocks of
   floorless kinds may be negative, while boundary inputs are unavailable
-  until the next batch. The exact state is an exact-arithmetic reference; the
+  until the next batch. A stock holds a point of its kind and flows move the
+  kind's difference; totals and balance residuals are refused for point kinds,
+  whose values do not sum. The exact state is an exact-arithmetic reference; the
   contiguous binary64 state is a candidate execution path with an explicit
   comparison tolerance and atomic overflow rejection. Performance claims wait
   for domain-scale benchmarks.
@@ -32,8 +34,9 @@ This Cargo workspace contains the following library crates:
   capacities, immutable participant records and atomic prepare/publish. It does
   not proportionally limit individual legs. See its [contract and Python API](conservation-exchange/README.md).
 - `conservation-bridgman` implements the kind and dimension-algebra traits for
-  Bridgman kinds. It holds no kind data; kinds, dimensions, grades and floors are
-  read from a Bridgman registry pinned by Git revision.
+  Bridgman kinds. It holds no kind data of its own; kinds, affine roles,
+  differences, dimensions, grades and floors are read once, when a Bridgman
+  registry pinned by Git revision is admitted.
 
 `conservation-python` provides the direct PyO3 binding for `conservation-exchange`.
 Run `uv sync --locked` before the Python tests or binding-aware Cargo commands;

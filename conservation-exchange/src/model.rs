@@ -2,12 +2,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
 
-use conservation_core::{DimensionAlgebra, nonblank};
+use conservation_core::{DimensionAlgebra, Factor, nonblank};
 use num_rational::BigRational;
 use num_traits::{Signed, Zero};
 use serde::{Deserialize, Serialize};
 
 use crate::Constraint;
+use crate::expression::require_dimensions;
 
 /// An exact rational in canonical base units. Binary floats are never implicit inputs.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -232,19 +233,16 @@ impl<K: DimensionAlgebra> ValidatedModel<K> {
                     "capacity weights require nonnegative stocks and weights",
                 ));
             }
-            let dimensions = K::product(&weight.kind.dimensions(), &stock.kind.dimensions())
+            let weighted = K::product(&Factor::Kind(weight.kind), &Factor::Kind(stock.kind))
                 .map_err(Error::Algebra)?;
-            let maximum = capacity.maximum.kind.dimensions();
-            if dimensions != maximum {
-                return Err(Error::Dimensions {
-                    context: DimensionContext::Capacity {
-                        capacity: id.clone(),
-                        stock: stock.id.clone(),
-                    },
-                    left: dimensions,
-                    right: maximum,
-                });
-            }
+            require_dimensions(
+                &Factor::Derived(weighted),
+                &Factor::Kind(capacity.maximum.kind),
+                || DimensionContext::Capacity {
+                    capacity: id.clone(),
+                    stock: stock.id.clone(),
+                },
+            )?;
         }
         Ok(())
     }
@@ -471,6 +469,12 @@ pub enum Error<K: DimensionAlgebra> {
         context: DimensionContext,
         left: K::Dimensions,
         right: K::Dimensions,
+    },
+    /// A point kind was compared with a computed quantity. What a product
+    /// yields is never a point, whatever the dimensions.
+    PointKind {
+        context: DimensionContext,
+        kind: K,
     },
     Algebra(K::AlgebraError),
     /// The amount lies below the kind's floor. `kind.floor()` recovers the floor.

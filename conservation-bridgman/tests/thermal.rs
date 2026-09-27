@@ -1,13 +1,14 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
-use bridgman_core::{Grade, Op, ProductOp, QuantityError, Registry};
+use bridgman_core::{DerivationError, Grade, Op, ProductOp, QuantityError, Registry};
 use conservation_bridgman::*;
-use conservation_core::{Affine, DimensionAlgebra, Kind, KindRegistry};
+use conservation_core::{Affine, DimensionAlgebra, Factor, Kind, KindRegistry};
 use conservation_dynamics::{
-    ProcessDefinition, ProcessId, ProposedFlow, Rationing, StockFlowError, StockFlowSystem,
-    StockId, StockSpec,
+    ExactState, FlowSpec, FlowTopology, ProcessDefinition, ProcessId, Rationing, StockDefinition,
+    StockFlowError, StockId,
 };
-use conservation_exchange::{KindContext, Law};
+use conservation_exchange::{DimensionContext, KindContext, Law};
 use num_rational::BigRational;
 
 type Quantity = conservation_exchange::Quantity<BridgmanKind>;
@@ -92,41 +93,49 @@ fn enthalpy_stock_runs_through_dynamics() {
     let kettle = StockId::new("kettle").unwrap();
     let room = StockId::new("room").unwrap();
     let conduction = ProcessId::new("conduction").unwrap();
-    let mut system = StockFlowSystem::new(
-        [
-            StockSpec {
-                id: kettle.clone(),
-                kind: enthalpy,
-                initial: rational(500),
-            },
-            StockSpec {
-                id: room.clone(),
-                kind: enthalpy,
-                initial: rational(100),
-            },
-        ],
-        [ProcessDefinition {
-            id: conduction.clone(),
-            rationing: Rationing::Refuse,
-        }],
-    )
-    .unwrap();
-    let flow = |kind| ProposedFlow {
-        process: conduction.clone(),
-        kind,
-        source: Some(kettle.clone()),
-        target: Some(room.clone()),
-        amount: rational(600),
+    let conducting = |kind| {
+        FlowTopology::new(
+            [
+                StockDefinition {
+                    id: kettle.clone(),
+                    kind: enthalpy,
+                },
+                StockDefinition {
+                    id: room.clone(),
+                    kind: enthalpy,
+                },
+            ],
+            [FlowSpec {
+                process: conduction.clone(),
+                kind,
+                source: Some(kettle.clone()),
+                target: Some(room.clone()),
+            }],
+            [ProcessDefinition {
+                id: conduction.clone(),
+                rationing: Rationing::Refuse,
+            }],
+        )
     };
-    let report = system.settle(&[flow(energy)]).unwrap();
+    let topology = Arc::new(conducting(energy).unwrap());
+    let mut state = ExactState::new(topology.clone(), vec![rational(500), rational(100)]).unwrap();
+    let report = state.settle(&[rational(600)]).unwrap();
     // Enthalpy declares no minimum, so the withdrawal is not limited.
-    assert_eq!(report.applied_by(&conduction), rational(600));
-    assert_eq!(system.amount(&kettle), Some(&rational(-100)));
-    assert_eq!(system.amount(&room), Some(&rational(700)));
-    assert_eq!(system.total(enthalpy), rational(600));
-    assert_eq!(system.balance_residual(enthalpy), rational(0));
+    assert_eq!(
+        topology
+            .materialize_exact_report(&report)
+            .unwrap()
+            .applied_by(&conduction),
+        rational(600)
+    );
+    assert_eq!(state.amount(&kettle), Some(&rational(-100)));
+    assert_eq!(state.amount(&room), Some(&rational(700)));
+    // Enthalpy is a point kind: its values do not sum, through Bridgman's role.
+    let refused = StockFlowError::PointSum { kind: enthalpy };
+    assert_eq!(state.total(enthalpy), Err(refused.clone()));
+    assert_eq!(state.balance_residual(enthalpy), Err(refused));
     assert!(matches!(
-        system.settle(&[flow(enthalpy)]),
+        conducting(enthalpy),
         Err(StockFlowError::KindMismatch { stock_kind, flow_kind, .. })
             if stock_kind == enthalpy && flow_kind == enthalpy
     ));
@@ -201,35 +210,152 @@ fn thermal_kinds_report_role_floor_and_difference() {
 }
 
 #[test]
-fn dimensions_carry_grade_and_points() {
+fn products_are_bridgman_derivations_over_factors() {
     let (energy, torque, mass) = (kind("energy"), kind("torque"), kind("mass"));
     let (specific_energy, velocity) = (kind("specific_energy"), kind("velocity"));
+    let (enthalpy, duration) = (kind("enthalpy"), kind("duration"));
     assert_ne!(energy.dimensions(), torque.dimensions());
     assert_eq!(energy.dimensions().grade, Grade::Scalar);
     assert_eq!(torque.dimensions().grade, Grade::Bivector);
+    // A product of kinds compares with a kind by dimensions and grade, whatever
+    // the kinds' affine roles (energy is enthalpy's difference; mass is linear).
     assert_eq!(
-        BridgmanKind::product(&mass.dimensions(), &specific_energy.dimensions()),
+        BridgmanKind::product(&Factor::Kind(mass), &Factor::Kind(specific_energy)),
         Ok(energy.dimensions())
     );
     assert_eq!(
-        BridgmanKind::quotient(&energy.dimensions(), &mass.dimensions()),
+        BridgmanKind::quotient(&Factor::Kind(energy), &Factor::Kind(mass)),
         Ok(specific_energy.dimensions())
     );
+    // A product's result is a factor of the next product; it has no role.
+    let content =
+        BridgmanKind::product(&Factor::Kind(mass), &Factor::Kind(specific_energy)).unwrap();
     assert_eq!(
-        BridgmanKind::product(&velocity.dimensions(), &velocity.dimensions()),
-        Err(BridgmanAlgebraError::Ungraded {
+        BridgmanKind::quotient(&Factor::Derived(content.clone()), &Factor::Kind(duration)),
+        Ok(kind("power").dimensions())
+    );
+    assert_eq!(
+        BridgmanKind::product(&Factor::Kind(velocity), &Factor::Kind(velocity)),
+        Err(DerivationError::Ungraded {
+            left: Factor::Kind(velocity),
             op: ProductOp::Mul,
-            left: Grade::Vector,
-            right: Grade::Vector,
+            right: Factor::Kind(velocity),
+            left_grade: Grade::Vector,
+            right_grade: Grade::Vector,
         })
     );
+    // Bridgman refuses a point kind as a factor and the refusal names it.
+    let refusal =
+        BridgmanKind::product(&Factor::Derived(content), &Factor::Kind(enthalpy)).unwrap_err();
     assert!(matches!(
-        BridgmanKind::product(&kind("enthalpy").dimensions(), &mass.dimensions()),
-        Err(BridgmanAlgebraError::Point {
+        &refusal,
+        DerivationError::Point {
             op: ProductOp::Mul,
+            point: Factor::Kind(point),
             ..
-        })
+        } if *point == enthalpy
     ));
+    // The derived factor is shown by Bridgman's own Graded rendering.
+    assert_eq!(
+        refusal.to_string(),
+        format!(
+            "M:1,L:2,T:-2 grade 0 {} enthalpy names point kind enthalpy, which takes no part in products",
+            ProductOp::Mul
+        )
+    );
+}
+
+/// A law whose one constraint says `left = right`, over a slot `body` of
+/// `body_kind` and a `mass` slot.
+fn heat_content_law(body_kind: BridgmanKind, left: Expr, right: Expr) -> Law<BridgmanKind> {
+    Law {
+        id: "heat-content".into(),
+        slots: BTreeMap::from([("body".into(), body_kind), ("mass".into(), kind("mass"))]),
+        boundaries: BTreeMap::new(),
+        facts: BTreeMap::new(),
+        participants: BTreeSet::new(),
+        constraints: vec![Constraint::equal("heat-content", left, right)],
+    }
+}
+
+#[test]
+fn an_enthalpy_capacity_maximum_is_refused_beside_mass_times_specific_energy() {
+    let (mass, specific_energy) = (kind("mass"), kind("specific_energy"));
+    let weighted = |maximum_kind| {
+        let mut declaration = model(vec![supply_law("mass-supply", mass)]);
+        declaration.capacities.insert(
+            "heat".into(),
+            conservation_exchange::Capacity {
+                maximum: Quantity::new(rational(100), maximum_kind),
+            },
+        );
+        let engine = Engine::new(declaration).unwrap();
+        let mut sack = stock("sack", mass);
+        // One unit of mass weighs 1 against a maximum of 100: the load fits.
+        sack.capacities
+            .insert("heat".into(), Quantity::new(rational(1), specific_energy));
+        engine.prepare(
+            withdrawal(
+                "sack-supply",
+                sack,
+                "mass-supply",
+                Quantity::new(rational(1), mass),
+            ),
+            vec![],
+        )
+    };
+    assert!(weighted(kind("energy")).is_ok());
+    assert_eq!(
+        weighted(kind("enthalpy")).err(),
+        Some(Error::PointKind {
+            context: DimensionContext::Capacity {
+                capacity: "heat".into(),
+                stock: "sack".into(),
+            },
+            kind: kind("enthalpy"),
+        })
+    );
+}
+
+#[test]
+fn an_enthalpy_slot_is_refused_beside_mass_times_specific_energy() {
+    let content = || {
+        Expr::after("mass").product(Expr::constant(Quantity::new(
+            rational(4186),
+            kind("specific_energy"),
+        )))
+    };
+    assert!(
+        Engine::new(model(vec![heat_content_law(
+            kind("energy"),
+            Expr::after("body"),
+            content(),
+        )]))
+        .is_ok()
+    );
+    assert_eq!(
+        Engine::new(model(vec![heat_content_law(
+            kind("enthalpy"),
+            Expr::after("body"),
+            content(),
+        )]))
+        .err(),
+        Some(Error::PointKind {
+            context: DimensionContext::Constraint {
+                id: "heat-content".into()
+            },
+            kind: kind("enthalpy"),
+        })
+    );
+    // A difference of enthalpy is energy, and is accepted.
+    assert!(
+        Engine::new(model(vec![heat_content_law(
+            kind("enthalpy"),
+            Expr::delta("body"),
+            content(),
+        )]))
+        .is_ok()
+    );
 }
 
 #[test]
@@ -244,10 +370,10 @@ fn registry_resolves_every_name_it_displays() {
 #[test]
 fn typed_kinds_cross_only_their_own_registry() {
     assert_eq!(
-        thermal().of(bridgman_core::profile::registry().kind("energy").unwrap()),
+        thermal().of(bridgman_core::thermal().kind("energy").unwrap()),
         Ok(kind("energy"))
     );
-    let leaked = BridgmanKinds::leak(bridgman_core::profile::registry().clone()).unwrap();
+    let leaked = BridgmanKinds::leak(bridgman_core::thermal().clone()).unwrap();
     assert_ne!(leaked.resolve("energy").unwrap(), kind("energy"));
     assert!(matches!(
         thermal().of(leaked.resolve("energy").unwrap().bridgman()),
@@ -260,11 +386,15 @@ fn unresolved_dimensions_are_refused_at_admission() {
     let registry = Registry::from_yaml("schema: 4\nkinds:\n  - {id: vague}\nunits: []\n");
     assert!(registry.is_ok());
     let error = BridgmanKinds::leak(registry.unwrap()).err().unwrap();
-    let unresolved = QuantityError::UnresolvedDimensions("vague".into());
+    let BridgmanKindError::Dimensions { kind: vague, .. } = &error else {
+        panic!("expected unresolved dimensions, got {error:?}");
+    };
+    assert_eq!(vague.id(), "vague");
+    let unresolved =
+        QuantityError::Derivation(DerivationError::UnresolvedDimensions { kind: *vague });
     assert!(matches!(
         &error,
-        BridgmanKindError::Dimensions { kind, source }
-            if kind.id() == "vague" && **source == unresolved
+        BridgmanKindError::Dimensions { source, .. } if **source == unresolved
     ));
     assert_eq!(
         std::error::Error::source(&error).and_then(|source| source.downcast_ref::<QuantityError>()),
