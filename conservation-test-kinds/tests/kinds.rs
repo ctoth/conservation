@@ -1,4 +1,4 @@
-use conservation_core::{Affine, DimensionAlgebra, Kind, KindRegistry};
+use conservation_core::{Affine, DimensionAlgebra, Factor, Kind, KindRegistry};
 use conservation_test_kinds::{TestDimensions, TestKind, TestKinds};
 use num_bigint::BigInt;
 use num_rational::BigRational;
@@ -61,8 +61,10 @@ fn energy_and_torque_share_dimensions_but_are_distinct_kinds() {
 
 #[test]
 fn dimensions_multiply_divide_and_display() {
-    let energy = TestKind::Energy.dimensions();
-    let material = TestKind::Material.dimensions();
+    let (energy, material) = (
+        Factor::Kind(TestKind::Energy),
+        Factor::Kind(TestKind::Material),
+    );
     assert_eq!(
         TestKind::quotient(&energy, &material),
         Ok(TestKind::EnergyPerMaterial.dimensions())
@@ -71,11 +73,17 @@ fn dimensions_multiply_divide_and_display() {
         TestKind::product(&material, &material),
         Ok(TestKind::MaterialSquared.dimensions())
     );
+    // A product's result is a factor of the next one.
+    let squared = TestKind::product(&material, &material).unwrap();
+    assert_eq!(
+        TestKind::quotient(&Factor::Derived(squared), &material),
+        Ok(TestKind::Material.dimensions())
+    );
     assert_eq!(
         TestKind::EnergyPerMaterial.dimensions().to_string(),
         "energy^1·material^-1"
     );
     assert_eq!(TestKind::Ratio.dimensions().to_string(), "1");
     let huge = TestDimensions([i32::MAX, 0, 0, 0, 0, 0, 0]);
-    assert!(TestKind::product(&huge, &TestKind::Amount.dimensions()).is_err());
+    assert!(TestKind::product(&Factor::Derived(huge), &Factor::Kind(TestKind::Amount)).is_err());
 }

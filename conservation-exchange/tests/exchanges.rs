@@ -708,6 +708,83 @@ fn nonlinear_derived_constraint_checks_motion_without_a_second_energy_stock() {
     assert_eq!(engine.amount("x").unwrap(), &q(4).amount);
 }
 
+/// A law whose one constraint says `left = right`, over a slot `body` of
+/// `body_kind` and a material slot `mass`.
+fn heat_content_law(body_kind: TestKind, left: Expr, right: Expr) -> Law<TestKind> {
+    Law {
+        id: "heat-content".into(),
+        slots: BTreeMap::from([
+            ("body".into(), body_kind),
+            ("mass".into(), TestKind::Material),
+        ]),
+        boundaries: BTreeMap::new(),
+        facts: BTreeMap::new(),
+        participants: BTreeSet::new(),
+        constraints: vec![equation("heat-content", left, right)],
+    }
+}
+
+fn specific(value: i64) -> Expr {
+    Expr::constant(quantity(value, TestKind::EnergyPerMaterial))
+}
+
+#[test]
+fn products_chain_through_derived_factors() {
+    // ((mass · e) · mass) / mass has the dimensions of energy.
+    let chained = Expr::after("mass")
+        .product(specific(3))
+        .product(Expr::after("mass"))
+        .quotient(Expr::after("mass"));
+    let mut declaration = model();
+    declaration.laws.push(heat_content_law(
+        TestKind::Energy,
+        Expr::after("body"),
+        chained,
+    ));
+    assert!(Engine::new(declaration).is_ok());
+}
+
+#[test]
+fn a_point_slot_is_refused_beside_a_derived_quantity_of_its_dimensions() {
+    // Enthalpy and mass · e share dimensions; enthalpy is a point kind.
+    assert_eq!(
+        TestKind::Enthalpy.dimensions(),
+        TestKind::Energy.dimensions()
+    );
+    for (left, right) in [
+        (
+            Expr::after("body"),
+            Expr::after("mass").product(specific(3)),
+        ),
+        (
+            Expr::after("mass").product(specific(3)),
+            Expr::before("body"),
+        ),
+    ] {
+        let mut declaration = model();
+        declaration
+            .laws
+            .push(heat_content_law(TestKind::Enthalpy, left, right));
+        assert_eq!(
+            Engine::new(declaration).err(),
+            Some(Error::PointKind {
+                context: DimensionContext::Constraint {
+                    id: "heat-content".into()
+                },
+                kind: TestKind::Enthalpy,
+            })
+        );
+    }
+    // The difference of that point is not a point, and is accepted.
+    let mut declaration = model();
+    declaration.laws.push(heat_content_law(
+        TestKind::Enthalpy,
+        Expr::delta("body"),
+        Expr::after("mass").product(specific(3)),
+    ));
+    assert!(Engine::new(declaration).is_ok());
+}
+
 #[test]
 fn foreign_preparation_and_participation_do_not_cross_engine_boundaries() {
     let mut first = Engine::new(model()).unwrap();

@@ -3,12 +3,12 @@ use std::sync::Arc;
 
 use bridgman_core::{DerivationError, Grade, Op, ProductOp, QuantityError, Registry};
 use conservation_bridgman::*;
-use conservation_core::{Affine, DimensionAlgebra, Kind, KindRegistry};
+use conservation_core::{Affine, DimensionAlgebra, Factor, Kind, KindRegistry};
 use conservation_dynamics::{
     ExactState, FlowSpec, FlowTopology, ProcessDefinition, ProcessId, Rationing, StockDefinition,
     StockFlowError, StockId,
 };
-use conservation_exchange::{KindContext, Law};
+use conservation_exchange::{DimensionContext, KindContext, Law};
 use num_rational::BigRational;
 
 type Quantity = conservation_exchange::Quantity<BridgmanKind>;
@@ -210,35 +210,106 @@ fn thermal_kinds_report_role_floor_and_difference() {
 }
 
 #[test]
-fn dimensions_carry_grade_and_points() {
+fn products_are_bridgman_derivations_over_factors() {
     let (energy, torque, mass) = (kind("energy"), kind("torque"), kind("mass"));
     let (specific_energy, velocity) = (kind("specific_energy"), kind("velocity"));
+    let (enthalpy, duration) = (kind("enthalpy"), kind("duration"));
     assert_ne!(energy.dimensions(), torque.dimensions());
     assert_eq!(energy.dimensions().grade, Grade::Scalar);
     assert_eq!(torque.dimensions().grade, Grade::Bivector);
+    // A product of kinds compares with a kind by dimensions and grade, whatever
+    // the kinds' affine roles (energy is enthalpy's difference; mass is linear).
     assert_eq!(
-        BridgmanKind::product(&mass.dimensions(), &specific_energy.dimensions()),
+        BridgmanKind::product(&Factor::Kind(mass), &Factor::Kind(specific_energy)),
         Ok(energy.dimensions())
     );
     assert_eq!(
-        BridgmanKind::quotient(&energy.dimensions(), &mass.dimensions()),
+        BridgmanKind::quotient(&Factor::Kind(energy), &Factor::Kind(mass)),
         Ok(specific_energy.dimensions())
     );
+    // A product's result is a factor of the next product; it has no role.
+    let content =
+        BridgmanKind::product(&Factor::Kind(mass), &Factor::Kind(specific_energy)).unwrap();
     assert_eq!(
-        BridgmanKind::product(&velocity.dimensions(), &velocity.dimensions()),
-        Err(BridgmanAlgebraError::Ungraded {
+        BridgmanKind::quotient(&Factor::Derived(content.clone()), &Factor::Kind(duration)),
+        Ok(kind("power").dimensions())
+    );
+    assert_eq!(
+        BridgmanKind::product(&Factor::Kind(velocity), &Factor::Kind(velocity)),
+        Err(DerivationError::Ungraded {
+            left: Factor::Kind(velocity),
             op: ProductOp::Mul,
-            left: Grade::Vector,
-            right: Grade::Vector,
+            right: Factor::Kind(velocity),
+            left_grade: Grade::Vector,
+            right_grade: Grade::Vector,
         })
     );
+    // Bridgman refuses a point kind as a factor and the refusal names it.
+    let refusal =
+        BridgmanKind::product(&Factor::Derived(content), &Factor::Kind(enthalpy)).unwrap_err();
     assert!(matches!(
-        BridgmanKind::product(&kind("enthalpy").dimensions(), &mass.dimensions()),
-        Err(BridgmanAlgebraError::Point {
+        &refusal,
+        DerivationError::Point {
             op: ProductOp::Mul,
+            point: Factor::Kind(point),
             ..
-        })
+        } if *point == enthalpy
     ));
+    assert!(refusal.to_string().contains("enthalpy"));
+}
+
+/// A law whose one constraint says `left = right`, over a slot `body` of
+/// `body_kind` and a `mass` slot.
+fn heat_content_law(body_kind: BridgmanKind, left: Expr, right: Expr) -> Law<BridgmanKind> {
+    Law {
+        id: "heat-content".into(),
+        slots: BTreeMap::from([("body".into(), body_kind), ("mass".into(), kind("mass"))]),
+        boundaries: BTreeMap::new(),
+        facts: BTreeMap::new(),
+        participants: BTreeSet::new(),
+        constraints: vec![Constraint::equal("heat-content", left, right)],
+    }
+}
+
+#[test]
+fn an_enthalpy_slot_is_refused_beside_mass_times_specific_energy() {
+    let content = || {
+        Expr::after("mass").product(Expr::constant(Quantity::new(
+            rational(4186),
+            kind("specific_energy"),
+        )))
+    };
+    assert!(
+        Engine::new(model(vec![heat_content_law(
+            kind("energy"),
+            Expr::after("body"),
+            content(),
+        )]))
+        .is_ok()
+    );
+    assert_eq!(
+        Engine::new(model(vec![heat_content_law(
+            kind("enthalpy"),
+            Expr::after("body"),
+            content(),
+        )]))
+        .err(),
+        Some(Error::PointKind {
+            context: DimensionContext::Constraint {
+                id: "heat-content".into()
+            },
+            kind: kind("enthalpy"),
+        })
+    );
+    // A difference of enthalpy is energy, and is accepted.
+    assert!(
+        Engine::new(model(vec![heat_content_law(
+            kind("enthalpy"),
+            Expr::delta("body"),
+            content(),
+        )]))
+        .is_ok()
+    );
 }
 
 #[test]
