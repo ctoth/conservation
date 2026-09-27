@@ -1,11 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use bridgman_core::{DerivationError, Grade, Op, ProductOp, QuantityError, Registry};
 use conservation_bridgman::*;
 use conservation_core::{Affine, DimensionAlgebra, Kind, KindRegistry};
 use conservation_dynamics::{
-    ProcessDefinition, ProcessId, ProposedFlow, Rationing, StockFlowError, StockFlowSystem,
-    StockId, StockSpec,
+    ExactState, FlowSpec, FlowTopology, ProcessDefinition, ProcessId, Rationing, StockDefinition,
+    StockFlowError, StockId,
 };
 use conservation_exchange::{KindContext, Law};
 use num_rational::BigRational;
@@ -92,41 +93,47 @@ fn enthalpy_stock_runs_through_dynamics() {
     let kettle = StockId::new("kettle").unwrap();
     let room = StockId::new("room").unwrap();
     let conduction = ProcessId::new("conduction").unwrap();
-    let mut system = StockFlowSystem::new(
-        [
-            StockSpec {
-                id: kettle.clone(),
-                kind: enthalpy,
-                initial: rational(500),
-            },
-            StockSpec {
-                id: room.clone(),
-                kind: enthalpy,
-                initial: rational(100),
-            },
-        ],
-        [ProcessDefinition {
-            id: conduction.clone(),
-            rationing: Rationing::Refuse,
-        }],
-    )
-    .unwrap();
-    let flow = |kind| ProposedFlow {
-        process: conduction.clone(),
-        kind,
-        source: Some(kettle.clone()),
-        target: Some(room.clone()),
-        amount: rational(600),
+    let conducting = |kind| {
+        FlowTopology::new(
+            [
+                StockDefinition {
+                    id: kettle.clone(),
+                    kind: enthalpy,
+                },
+                StockDefinition {
+                    id: room.clone(),
+                    kind: enthalpy,
+                },
+            ],
+            [FlowSpec {
+                process: conduction.clone(),
+                kind,
+                source: Some(kettle.clone()),
+                target: Some(room.clone()),
+            }],
+            [ProcessDefinition {
+                id: conduction.clone(),
+                rationing: Rationing::Refuse,
+            }],
+        )
     };
-    let report = system.settle(&[flow(energy)]).unwrap();
+    let topology = Arc::new(conducting(energy).unwrap());
+    let mut state = ExactState::new(topology.clone(), vec![rational(500), rational(100)]).unwrap();
+    let report = state.settle(&[rational(600)]).unwrap();
     // Enthalpy declares no minimum, so the withdrawal is not limited.
-    assert_eq!(report.applied_by(&conduction), rational(600));
-    assert_eq!(system.amount(&kettle), Some(&rational(-100)));
-    assert_eq!(system.amount(&room), Some(&rational(700)));
-    assert_eq!(system.total(enthalpy), rational(600));
-    assert_eq!(system.balance_residual(enthalpy), rational(0));
+    assert_eq!(
+        topology
+            .materialize_exact_report(&report)
+            .unwrap()
+            .applied_by(&conduction),
+        rational(600)
+    );
+    assert_eq!(state.amount(&kettle), Some(&rational(-100)));
+    assert_eq!(state.amount(&room), Some(&rational(700)));
+    assert_eq!(state.total(enthalpy), rational(600));
+    assert_eq!(state.balance_residual(enthalpy), rational(0));
     assert!(matches!(
-        system.settle(&[flow(enthalpy)]),
+        conducting(enthalpy),
         Err(StockFlowError::KindMismatch { stock_kind, flow_kind, .. })
             if stock_kind == enthalpy && flow_kind == enthalpy
     ));

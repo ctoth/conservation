@@ -8,7 +8,6 @@ use num_traits::{One, Signed, ToPrimitive, Zero};
 
 use crate::{
     AppliedFlow, FlowTopology, ProcessId, Rationing, SettlementReport, StockFlowError, StockId,
-    source_scale,
 };
 
 /// Applied amounts from one compiled settlement, indexed like the topology's flows.
@@ -627,6 +626,33 @@ fn refusing_process<K: Kind, N>(
         .map(|(flow, _)| &topology.processes()[flow.process()])
         .min()
         .cloned()
+}
+
+/// How much of one source's summed withdrawal settles.
+fn source_scale<K: Kind>(
+    stock: &StockId,
+    floor: Option<BigRational>,
+    available: &BigRational,
+    withdrawal: &BigRational,
+    refusing: impl FnOnce() -> Option<ProcessId>,
+) -> Result<BigRational, StockFlowError<K>> {
+    let Some(floor) = floor else {
+        return Ok(BigRational::one());
+    };
+    let headroom = available - &floor;
+    if withdrawal.is_zero() || *withdrawal <= headroom {
+        return Ok(BigRational::one());
+    }
+    match refusing() {
+        Some(process) => Err(StockFlowError::BelowFloor {
+            stock: stock.clone(),
+            floor: Box::new(floor),
+            process,
+            available: Box::new(available.clone()),
+            withdrawal: Box::new(withdrawal.clone()),
+        }),
+        None => Ok(headroom / withdrawal),
+    }
 }
 
 fn compute_exact_batch<K: Kind>(

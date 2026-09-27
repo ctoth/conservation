@@ -2,9 +2,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use conservation_dynamics::{
-    DenseState, DenseTolerance, ExactState, FlowRole, FlowSpec, FlowTopology, ProcessDefinition,
-    ProcessId, ProposedFlow, Rationing, StockDefinition, StockFlowError, StockFlowSystem, StockId,
-    StockSpec,
+    AppliedFlow, DenseState, DenseTolerance, ExactState, FlowRole, FlowSpec, FlowTopology,
+    ProcessDefinition, ProcessId, Rationing, StockDefinition, StockFlowError, StockId,
 };
 use conservation_test_kinds::TestKind;
 use num_bigint::BigInt;
@@ -84,21 +83,6 @@ fn material_topology() -> Arc<FlowTopology<TestKind>> {
         )
         .unwrap(),
     )
-}
-
-fn proposal(
-    process_name: &str,
-    source: Option<&str>,
-    target: Option<&str>,
-    amount: BigRational,
-) -> ProposedFlow<TestKind> {
-    ProposedFlow {
-        process: process(process_name),
-        kind: TestKind::Material,
-        source: source.map(stock),
-        target: target.map(stock),
-        amount,
-    }
 }
 
 #[test]
@@ -485,53 +469,38 @@ fn dense_discard_path_matches_owned_reports_and_remains_atomic() {
 }
 
 #[test]
-fn compiled_exact_state_agrees_with_the_independent_legacy_settlement_path() {
+fn materialized_exact_report_names_every_settled_flow() {
     let topology = material_topology();
-    let mut compiled = ExactState::new(topology.clone(), vec![integer(10), integer(0)]).unwrap();
-    let mut legacy = StockFlowSystem::new(
-        [
-            StockSpec {
-                id: stock("a"),
-                kind: TestKind::Material,
-                initial: integer(10),
-            },
-            StockSpec {
-                id: stock("b"),
-                kind: TestKind::Material,
-                initial: integer(0),
-            },
-        ],
-        [
-            declare("input", Rationing::Ration),
-            declare("move", Rationing::Ration),
-            declare("export", Rationing::Ration),
-        ],
-    )
-    .unwrap();
-
-    let compiled_report = compiled
+    let mut state = ExactState::new(topology.clone(), vec![integer(10), integer(0)]).unwrap();
+    let report = state
         .settle(&[integer(3), integer(8), integer(12)])
         .unwrap();
-    let legacy_report = legacy
-        .settle(&[
-            proposal("input", None, Some("a"), integer(3)),
-            proposal("move", Some("a"), Some("b"), integer(8)),
-            proposal("export", Some("a"), None, integer(12)),
-        ])
-        .unwrap();
-    let materialized = topology.materialize_exact_report(&compiled_report).unwrap();
+    let materialized = topology.materialize_exact_report(&report).unwrap();
 
-    assert_eq!(materialized, legacy_report);
-    assert_eq!(compiled.amount(&stock("a")), legacy.amount(&stock("a")));
-    assert_eq!(compiled.amount(&stock("b")), legacy.amount(&stock("b")));
+    // The input arrives after the batch, so `a` holds 10 for 8 + 12: scale 1/2.
+    let applied =
+        |name, source: Option<&str>, target: Option<&str>, requested, applied, role| AppliedFlow {
+            process: process(name),
+            kind: TestKind::Material,
+            source: source.map(stock),
+            target: target.map(stock),
+            requested: integer(requested),
+            applied: integer(applied),
+            role,
+        };
     assert_eq!(
-        compiled.inputs(TestKind::Material),
-        legacy.inputs(TestKind::Material)
+        materialized.flows(),
+        &[
+            applied("input", None, Some("a"), 3, 3, FlowRole::Input),
+            applied("move", Some("a"), Some("b"), 8, 4, FlowRole::Transfer),
+            applied("export", Some("a"), None, 12, 6, FlowRole::Output),
+        ]
     );
-    assert_eq!(
-        compiled.outputs(TestKind::Material),
-        legacy.outputs(TestKind::Material)
-    );
+    assert_eq!(materialized.applied_by(&process("move")), integer(4));
+    assert_eq!(state.amount(&stock("a")), Some(&integer(3)));
+    assert_eq!(state.amount(&stock("b")), Some(&integer(4)));
+    assert_eq!(state.inputs(TestKind::Material), integer(3));
+    assert_eq!(state.outputs(TestKind::Material), integer(6));
 }
 
 #[test]
@@ -1001,28 +970,6 @@ fn withdrawal_below_floor_is_refused_naming_stock_floor_and_process() {
     assert_eq!(exact, exact_before);
     assert_eq!(dense, dense_before);
 
-    let mut system = StockFlowSystem::new(
-        [StockSpec {
-            id: stock("vault"),
-            kind: TestKind::Reserve,
-            initial: integer(12),
-        }],
-        [],
-    )
-    .unwrap();
-    let system_before = system.clone();
-    assert_eq!(
-        system.settle(&[ProposedFlow {
-            process: process("spend"),
-            kind: TestKind::Reserve,
-            source: Some(stock("vault")),
-            target: None,
-            amount: integer(5),
-        }]),
-        Err(expected.clone())
-    );
-    assert_eq!(system, system_before);
-
     let message = expected.to_string();
     for part in ["vault", "10", "spend"] {
         assert!(message.contains(part), "{message}");
@@ -1137,20 +1084,6 @@ fn process_declarations_reject_unknown_and_duplicate_processes() {
         ),
         Err(StockFlowError::DuplicateProcess(process("move")))
     );
-    assert_eq!(
-        StockFlowSystem::new(
-            [StockSpec {
-                id: stock("a"),
-                kind: TestKind::Material,
-                initial: integer(0),
-            }],
-            [
-                declare("move", Rationing::Ration),
-                declare("move", Rationing::Ration)
-            ]
-        ),
-        Err(StockFlowError::DuplicateProcess(process("move")))
-    );
 }
 
 #[test]
@@ -1187,18 +1120,7 @@ fn initial_amount_below_the_floor_is_rejected_naming_stock_and_floor() {
         ExactState::new(topology.clone(), vec![integer(9)]),
         Err(expected.clone())
     );
-    assert_eq!(DenseState::new(topology, vec![9.0]), Err(expected.clone()));
-    assert_eq!(
-        StockFlowSystem::new(
-            [StockSpec {
-                id: stock("vault"),
-                kind: TestKind::Reserve,
-                initial: integer(9),
-            }],
-            [],
-        ),
-        Err(expected)
-    );
+    assert_eq!(DenseState::new(topology, vec![9.0]), Err(expected));
 }
 
 proptest! {
