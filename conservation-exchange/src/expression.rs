@@ -228,7 +228,7 @@ impl<K: DimensionAlgebra> Expr<K> {
                 a.coverage(result);
                 b.coverage(result);
             }
-            _ => {}
+            Self::Constant(_) | Self::Before(_) | Self::Fact(_) => {}
         }
     }
 }
