@@ -452,7 +452,10 @@ fn dense_tracks_the_exact_reference_across_repeated_batches() {
         exact.outputs(TestKind::Material).to_f64().unwrap(),
         dense.outputs(TestKind::Material)
     ));
-    assert!(dense.balance_within(TestKind::Material, tolerance));
+    assert_eq!(
+        dense.balance_within(TestKind::Material, tolerance),
+        Ok(true)
+    );
 }
 
 #[test]
@@ -585,8 +588,11 @@ fn each_conserved_kind_balances_independently() {
     dense.settle(&[7.0, 3.0, 4.0, 6.0]).unwrap();
 
     for conserved_kind in [TestKind::Matter, TestKind::Energy] {
-        assert!(exact.balance_residual(conserved_kind).is_zero());
-        assert!(DenseTolerance::default().contains(dense.balance_residual(conserved_kind), 0.0));
+        assert!(exact.balance_residual(conserved_kind).unwrap().is_zero());
+        assert!(
+            DenseTolerance::default()
+                .contains(dense.balance_residual(conserved_kind).unwrap(), 0.0)
+        );
     }
 }
 
@@ -722,7 +728,10 @@ fn dense_settles_a_valid_eleven_thousand_way_proportional_batch() {
     );
     assert!(DenseTolerance::default().contains(state.amount(&stock("source")).unwrap(), 0.0));
     assert!(DenseTolerance::default().contains(state.amount(&stock("target")).unwrap(), 1.0));
-    assert!(state.balance_within(TestKind::Material, DenseTolerance::default()));
+    assert_eq!(
+        state.balance_within(TestKind::Material, DenseTolerance::default()),
+        Ok(true)
+    );
 }
 
 #[test]
@@ -782,16 +791,25 @@ fn dense_balance_diagnostics_do_not_overflow_on_cancelling_maxima() {
     let mut state = DenseState::new(topology, vec![f64::MAX]).unwrap();
     state.settle(&[f64::MAX, f64::MAX]).unwrap();
 
-    assert_eq!(state.balance_residual(TestKind::Material), 0.0);
-    assert!(state.balance_within(TestKind::Material, DenseTolerance::default()));
-    assert!(!state.balance_within(TestKind::Charge, DenseTolerance::default()));
-    assert!(!state.balance_within(
-        TestKind::Material,
-        DenseTolerance {
-            absolute: f64::NAN,
-            relative: 0.0,
-        }
-    ));
+    assert_eq!(state.balance_residual(TestKind::Material), Ok(0.0));
+    assert_eq!(
+        state.balance_within(TestKind::Material, DenseTolerance::default()),
+        Ok(true)
+    );
+    assert_eq!(
+        state.balance_within(TestKind::Charge, DenseTolerance::default()),
+        Ok(false)
+    );
+    assert_eq!(
+        state.balance_within(
+            TestKind::Material,
+            DenseTolerance {
+                absolute: f64::NAN,
+                relative: 0.0,
+            }
+        ),
+        Ok(false)
+    );
 }
 
 #[test]
@@ -855,9 +873,17 @@ fn floorless_stock_starts_negative_and_settles_below_zero_in_both_backends() {
 
     assert_eq!(exact.amounts(), &[integer(-7)]);
     assert_eq!(dense.amounts(), &[-7.0]);
-    assert!(exact.balance_residual(TestKind::MaterialBalance).is_zero());
-    assert_eq!(dense.balance_residual(TestKind::MaterialBalance), 0.0);
-    assert!(dense.balance_within(TestKind::MaterialBalance, DenseTolerance::default()));
+    assert!(
+        exact
+            .balance_residual(TestKind::MaterialBalance)
+            .unwrap()
+            .is_zero()
+    );
+    assert_eq!(dense.balance_residual(TestKind::MaterialBalance), Ok(0.0));
+    assert_eq!(
+        dense.balance_within(TestKind::MaterialBalance, DenseTolerance::default()),
+        Ok(true)
+    );
 }
 
 #[test]
@@ -987,8 +1013,13 @@ fn signed_stock_settles_from_plus_two_to_minus_three_through_one_flow() {
 
     assert_eq!(exact.amounts(), &[integer(-3), integer(5)]);
     assert_eq!(dense.amounts(), &[-3.0, 5.0]);
-    assert!(exact.balance_residual(TestKind::MaterialBalance).is_zero());
-    assert_eq!(dense.balance_residual(TestKind::MaterialBalance), 0.0);
+    assert!(
+        exact
+            .balance_residual(TestKind::MaterialBalance)
+            .unwrap()
+            .is_zero()
+    );
+    assert_eq!(dense.balance_residual(TestKind::MaterialBalance), Ok(0.0));
 }
 
 fn below_floor(
@@ -1213,8 +1244,8 @@ proptest! {
                 for (exact_amount, dense_amount) in exact_report.applied().iter().zip(dense_report.applied()) {
                     prop_assert!(tolerance.contains(exact_amount.to_f64().unwrap(), *dense_amount));
                 }
-                prop_assert!(exact.balance_residual(TestKind::Reserve).is_zero());
-                prop_assert!(dense.balance_within(TestKind::Reserve, tolerance));
+                prop_assert!(exact.balance_residual(TestKind::Reserve).unwrap().is_zero());
+                prop_assert_eq!(dense.balance_within(TestKind::Reserve, tolerance), Ok(true));
             }
             (exact_result, dense_result) => {
                 prop_assert!(false, "exact {exact_result:?} but dense {dense_result:?}");
@@ -1245,7 +1276,7 @@ proptest! {
             prop_assert!(amount.is_finite());
             prop_assert!(*amount >= 0.0);
         }
-        prop_assert!(dense.balance_within(TestKind::Material, tolerance));
+        prop_assert_eq!(dense.balance_within(TestKind::Material, tolerance), Ok(true));
         for (exact_amount, dense_amount) in exact.amounts().iter().zip(dense.amounts()) {
             prop_assert!(tolerance.contains(exact_amount.to_f64().unwrap(), *dense_amount));
         }
@@ -1253,6 +1284,6 @@ proptest! {
             prop_assert!(tolerance.contains(exact_amount.to_f64().unwrap(), *dense_amount));
         }
         prop_assert!(exact.amounts().iter().all(|amount| !amount.is_negative()));
-        prop_assert!(exact.balance_residual(TestKind::Material).is_zero());
+        prop_assert!(exact.balance_residual(TestKind::Material).unwrap().is_zero());
     }
 }

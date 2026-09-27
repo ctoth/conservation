@@ -72,7 +72,12 @@ fn competing_withdrawals_are_limited_proportionally() {
     assert_eq!(report.applied(), &[integer(4), integer(6)]);
     assert_eq!(state.amount(&id("a")), Some(&integer(0)));
     assert_eq!(state.amount(&id("b")), Some(&integer(4)));
-    assert!(state.balance_residual(TestKind::Material).is_zero());
+    assert!(
+        state
+            .balance_residual(TestKind::Material)
+            .unwrap()
+            .is_zero()
+    );
 }
 
 proptest! {
@@ -101,7 +106,7 @@ proptest! {
 
         prop_assert!(!state.amount(&id("a")).unwrap().is_negative());
         prop_assert!(!state.amount(&id("b")).unwrap().is_negative());
-        prop_assert!(state.balance_residual(TestKind::Material).is_zero());
+        prop_assert!(state.balance_residual(TestKind::Material).unwrap().is_zero());
     }
 
     #[test]
@@ -151,8 +156,8 @@ proptest! {
         prop_assert_eq!(merged.amount(&id("a")), split.amount(&id("a")));
         prop_assert_eq!(merged.amount(&id("b")), split.amount(&id("b")));
         prop_assert_eq!(
-            merged.balance_residual(TestKind::Material),
-            split.balance_residual(TestKind::Material)
+            merged.balance_residual(TestKind::Material).unwrap(),
+            split.balance_residual(TestKind::Material).unwrap()
         );
     }
 }

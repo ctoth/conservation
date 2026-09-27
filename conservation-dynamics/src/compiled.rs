@@ -2,7 +2,7 @@ use std::ops::{Add, Div, Mul, Sub};
 use std::sync::Arc;
 use std::{fmt, mem};
 
-use conservation_core::Kind;
+use conservation_core::{Affine, Kind};
 use num_rational::BigRational;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 
@@ -74,6 +74,15 @@ impl<K: Kind> FlowTopology<K> {
             })
             .collect();
         Ok(SettlementReport { applied })
+    }
+
+    /// The index of a kind whose stocks are summed, or `None` when no stock
+    /// holds it. A point kind's values do not sum, so it is refused.
+    fn summed_kind(&self, kind: K) -> Result<Option<usize>, StockFlowError<K>> {
+        match kind.affine() {
+            Affine::Linear => Ok(self.kind_index(kind)),
+            Affine::Point { .. } => Err(StockFlowError::PointSum { kind }),
+        }
     }
 }
 
@@ -174,12 +183,13 @@ impl<K: Kind> ExactState<K> {
             .map(|index| &self.amounts[index])
     }
 
-    /// Current total of a conserved kind.
-    pub fn total(&self, kind: K) -> BigRational {
-        self.topology
-            .kind_index(kind)
+    /// Current total of a conserved kind; a point kind is refused.
+    pub fn total(&self, kind: K) -> Result<BigRational, StockFlowError<K>> {
+        Ok(self
+            .topology
+            .summed_kind(kind)?
             .map(|index| totals(&self.topology, &self.amounts)[index].clone())
-            .unwrap_or_default()
+            .unwrap_or_default())
     }
 
     /// Cumulative boundary input of a conserved kind.
@@ -192,15 +202,14 @@ impl<K: Kind> ExactState<K> {
         self.account(kind, &self.outputs)
     }
 
-    /// `initial + inputs - outputs - current`, exactly.
-    pub fn balance_residual(&self, kind: K) -> BigRational {
-        self.topology
-            .kind_index(kind)
-            .map_or_else(BigRational::zero, |index| {
-                self.initial[index].clone() + self.inputs[index].clone()
-                    - self.outputs[index].clone()
-                    - self.total(kind)
-            })
+    /// `initial + inputs - outputs - current`, exactly; a point kind is refused.
+    pub fn balance_residual(&self, kind: K) -> Result<BigRational, StockFlowError<K>> {
+        let Some(index) = self.topology.summed_kind(kind)? else {
+            return Ok(BigRational::zero());
+        };
+        Ok(self.initial[index].clone() + self.inputs[index].clone()
+            - self.outputs[index].clone()
+            - totals(&self.topology, &self.amounts)[index].clone())
     }
 
     /// Atomically settles requested amounts in stable flow-slot order.
@@ -372,12 +381,12 @@ impl<K: Kind> DenseState<K> {
             .map(|index| self.amounts[index])
     }
 
-    /// Current total of a conserved kind.
-    pub fn total(&self, kind: K) -> f64 {
-        self.topology
-            .kind_index(kind)
-            .map(|index| totals(&self.topology, &self.amounts)[index])
-            .unwrap_or(0.0)
+    /// Current total of a conserved kind; a point kind is refused.
+    pub fn total(&self, kind: K) -> Result<f64, StockFlowError<K>> {
+        Ok(self
+            .topology
+            .summed_kind(kind)?
+            .map_or(0.0, |index| self.current(index)))
     }
 
     /// Cumulative boundary input of a conserved kind.
@@ -390,42 +399,54 @@ impl<K: Kind> DenseState<K> {
         self.account(kind, &self.outputs)
     }
 
-    /// Floating-point `initial + inputs - outputs - current`.
-    pub fn balance_residual(&self, kind: K) -> f64 {
-        self.topology.kind_index(kind).map_or(0.0, |index| {
+    /// Floating-point `initial + inputs - outputs - current`; a point kind is
+    /// refused.
+    pub fn balance_residual(&self, kind: K) -> Result<f64, StockFlowError<K>> {
+        Ok(self.topology.summed_kind(kind)?.map_or(0.0, |index| {
             stable_residual(
                 [self.initial[index], self.inputs[index]],
-                [self.outputs[index], self.total(kind)],
+                [self.outputs[index], self.current(index)],
             )
-        })
+        }))
     }
 
     /// Tests the balance residual against an error budget scaled to all terms.
-    pub fn balance_within(&self, kind: K, tolerance: DenseTolerance) -> bool {
+    /// A kind no stock holds, or an invalid tolerance, is not within; a point
+    /// kind is refused.
+    pub fn balance_within(
+        &self,
+        kind: K,
+        tolerance: DenseTolerance,
+    ) -> Result<bool, StockFlowError<K>> {
+        let Some(index) = self.topology.summed_kind(kind)? else {
+            return Ok(false);
+        };
         if !tolerance.absolute.is_finite()
             || !tolerance.relative.is_finite()
             || tolerance.absolute < 0.0
             || tolerance.relative < 0.0
         {
-            return false;
+            return Ok(false);
         }
-        self.topology.kind_index(kind).is_some_and(|index| {
-            let current = self.total(kind);
-            let terms = [
-                self.initial[index],
-                self.inputs[index],
-                self.outputs[index],
-                current,
-            ];
-            let scale = terms.iter().map(|term| term.abs()).fold(0.0_f64, f64::max);
-            let residual = self.balance_residual(kind);
-            residual.is_finite()
-                && (scale == 0.0
-                    || (residual / scale).abs()
-                        <= tolerance.absolute / scale
-                            + tolerance.relative
-                                * terms.iter().map(|term| term.abs() / scale).sum::<f64>())
-        })
+        let terms = [
+            self.initial[index],
+            self.inputs[index],
+            self.outputs[index],
+            self.current(index),
+        ];
+        let scale = terms.iter().map(|term| term.abs()).fold(0.0_f64, f64::max);
+        let residual = self.balance_residual(kind)?;
+        Ok(residual.is_finite()
+            && (scale == 0.0
+                || (residual / scale).abs()
+                    <= tolerance.absolute / scale
+                        + tolerance.relative
+                            * terms.iter().map(|term| term.abs() / scale).sum::<f64>()))
+    }
+
+    /// The current total of the kind at `index`.
+    fn current(&self, index: usize) -> f64 {
+        totals(&self.topology, &self.amounts)[index]
     }
 
     /// Atomically settles requested amounts in stable flow-slot order.

@@ -218,6 +218,11 @@ pub enum StockFlowError<K> {
         /// Number of supplied values.
         actual: usize,
     },
+    /// A total or balance was asked of a point kind, whose values do not sum.
+    PointSum {
+        /// The point kind.
+        kind: K,
+    },
     /// A compiled report did not originate from the supplied topology.
     TopologyMismatch,
     /// A dense initial or proposed amount was NaN or infinite.
@@ -291,6 +296,10 @@ impl<K: Kind> fmt::Display for StockFlowError<K> {
             Self::AmountCount { expected, actual } => write!(
                 formatter,
                 "topology requires {expected} amounts, but {actual} were supplied"
+            ),
+            Self::PointSum { kind } => write!(
+                formatter,
+                "kind {kind} is a point kind; its values do not sum to a total or balance"
             ),
             Self::TopologyMismatch => {
                 formatter.write_str("compiled report does not match the supplied topology")
