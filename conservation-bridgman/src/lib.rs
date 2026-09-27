@@ -1,82 +1,156 @@
 #![forbid(unsafe_code)]
 
-//! Bridgman kinds as conservation kinds. The crate holds no kind data: identity,
-//! affine role, floor, dimensions and grade are read from a Bridgman registry.
+//! Bridgman kinds as conservation kinds. The crate holds no kind data of its
+//! own: identity, affine role, difference, floor, dimensions and grade are read
+//! from a Bridgman registry, once, when [`BridgmanKinds::new`] admits it.
 //!
 //! A coordinate of a stock of a Bridgman kind is its value in the kind's canonical
 //! unit (`bridgman_core::Kind::canonical_unit`), the unit Bridgman holds computed
 //! quantities and declared floors in.
 //!
-//! Handles are `'static`. Bridgman's bundled profile already is; any other
+//! Handles are `'static`. Bridgman's bundled catalog already is; any other
 //! catalog is leaked on purpose by [`BridgmanKinds::leak`], because catalogs load
-//! once per process (the lifetime decision of conservation#6).
+//! once per process (the lifetime decision of conservation#6). The readings
+//! admission takes are leaked beside the registry, once per admission, so a
+//! handle reads them without failing.
 
 use std::cmp::Ordering;
 use std::error::Error;
 use std::fmt;
+use std::hash::{Hash, Hasher};
+use std::sync::OnceLock;
 
 use bridgman_core::{
-    AffineRole, Dimensions, Grade, Kind as Declared, Op, ProductOp, Quantity, QuantityError,
+    AffineRole, Dimensions, Grade, Kind as Declared, Operand, ProductOp, Quantity, QuantityError,
     Registry,
 };
 use conservation_core::{Affine, DimensionAlgebra, Kind, KindRegistry};
 use num_rational::BigRational;
 
-/// Why a kind's reading was established when its registry was admitted; a
-/// `BridgmanKind` exists only for kinds of an admitted registry.
-const ADMITTED: &str = "BridgmanKinds::new admitted every kind of this registry";
+/// What admission read of one kind of a registry.
+#[derive(Debug)]
+struct Admitted {
+    kind: Declared<'static>,
+    /// Position of `kind.difference()` in the admitted table.
+    difference: usize,
+    /// The declared floor as an exact coordinate in the canonical unit.
+    floor: Option<BigRational>,
+    /// Dimensions, grade and affine role (`Declared::operand`).
+    operand: Operand,
+}
 
-/// A Bridgman kind of an admitted registry, as a conservation kind.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct BridgmanKind(Declared<'static>);
+/// A Bridgman kind of an admitted registry, as a conservation kind. Identity,
+/// order and hash are the Bridgman kind's.
+#[derive(Clone, Copy)]
+pub struct BridgmanKind {
+    table: &'static [Admitted],
+    index: usize,
+}
 
 impl BridgmanKind {
     /// The Bridgman kind this handle is.
     pub fn bridgman(self) -> Declared<'static> {
-        self.0
+        self.admitted().kind
+    }
+
+    fn admitted(self) -> &'static Admitted {
+        &self.table[self.index]
+    }
+}
+
+impl PartialEq for BridgmanKind {
+    fn eq(&self, other: &Self) -> bool {
+        self.bridgman() == other.bridgman()
+    }
+}
+
+impl Eq for BridgmanKind {}
+
+impl Hash for BridgmanKind {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.bridgman().hash(state);
+    }
+}
+
+impl Ord for BridgmanKind {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.bridgman().cmp(&other.bridgman())
+    }
+}
+
+impl PartialOrd for BridgmanKind {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl fmt::Debug for BridgmanKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_tuple("BridgmanKind")
+            .field(&self.bridgman())
+            .finish()
     }
 }
 
 impl fmt::Display for BridgmanKind {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(formatter)
+        self.bridgman().fmt(formatter)
     }
 }
 
-/// A `'static` Bridgman registry whose every kind has been checked to have
-/// resolved dimensions, a difference kind when it is a point, and an exactly
-/// readable floor when it declares one.
+/// A `'static` Bridgman registry whose every kind has resolved dimensions and,
+/// when it declares a floor, an exactly readable one. Admission reads each
+/// kind's difference, floor and dimensions once and keeps them.
 #[derive(Clone, Copy, Debug)]
 pub struct BridgmanKinds {
     registry: &'static Registry,
+    table: &'static [Admitted],
 }
 
 impl BridgmanKinds {
-    /// Bridgman's bundled thermal catalog (`bridgman_core::thermal`).
+    /// Bridgman's bundled thermal catalog (`bridgman_core::thermal`), admitted
+    /// once per process.
     pub fn thermal() -> Result<Self, BridgmanKindError> {
-        Self::new(bridgman_core::thermal())
+        static THERMAL: OnceLock<Result<BridgmanKinds, BridgmanKindError>> = OnceLock::new();
+        THERMAL
+            .get_or_init(|| Self::new(bridgman_core::thermal()))
+            .clone()
     }
 
     /// Admits a registry the process already holds for its lifetime.
     pub fn new(registry: &'static Registry) -> Result<Self, BridgmanKindError> {
-        for kind in registry.kinds() {
-            kind.dimensions()
-                .map_err(|source| BridgmanKindError::Dimensions {
+        let kinds: Vec<_> = registry.kinds().collect();
+        let table = kinds
+            .iter()
+            .map(|&kind| {
+                let operand = kind
+                    .operand()
+                    .map_err(|source| BridgmanKindError::Dimensions {
+                        kind,
+                        source: Box::new(source),
+                    })?;
+                let floor = kind
+                    .minimum()
+                    .map(|minimum| floor_coordinate(kind, minimum))
+                    .transpose()?;
+                let difference = kind.difference();
+                let difference = kinds
+                    .iter()
+                    .position(|candidate| *candidate == difference)
+                    .ok_or(BridgmanKindError::ForeignRegistry { kind: difference })?;
+                Ok(Admitted {
                     kind,
-                    source: Box::new(source),
-                })?;
-            match kind.role() {
-                AffineRole::Point => {
-                    difference_of(kind)
-                        .map_err(|source| BridgmanKindError::Difference { kind, source })?;
-                }
-                AffineRole::Linear | AffineRole::Difference => {}
-            }
-            if let Some(minimum) = kind.minimum() {
-                floor_coordinate(kind, minimum)?;
-            }
-        }
-        Ok(Self { registry })
+                    difference,
+                    floor,
+                    operand,
+                })
+            })
+            .collect::<Result<Vec<_>, BridgmanKindError>>()?;
+        Ok(Self {
+            registry,
+            table: Vec::leak(table),
+        })
     }
 
     /// Leaks `registry` for the process and admits it.
@@ -92,16 +166,20 @@ impl BridgmanKinds {
     /// The conservation handle of a Bridgman kind the caller already holds.
     /// Typed callers use this, not a name lookup.
     pub fn of(self, kind: Declared<'static>) -> Result<BridgmanKind, BridgmanKindError> {
-        if std::ptr::eq(kind.registry(), self.registry) {
-            Ok(BridgmanKind(kind))
-        } else {
-            Err(BridgmanKindError::ForeignRegistry { kind })
-        }
+        self.table
+            .iter()
+            .position(|admitted| admitted.kind == kind)
+            .map(|index| BridgmanKind {
+                table: self.table,
+                index,
+            })
+            .ok_or(BridgmanKindError::ForeignRegistry { kind })
     }
 
     /// Every kind, in the registry's declaration order.
     pub fn kinds(self) -> impl ExactSizeIterator<Item = BridgmanKind> {
-        self.registry.kinds().map(BridgmanKind)
+        let table = self.table;
+        (0..table.len()).map(move |index| BridgmanKind { table, index })
     }
 }
 
@@ -109,18 +187,11 @@ impl KindRegistry for BridgmanKinds {
     type Kind = BridgmanKind;
 
     fn resolve(&self, name: &str) -> Option<BridgmanKind> {
-        self.registry.kind(name).ok().map(BridgmanKind)
+        self.registry
+            .kind(name)
+            .ok()
+            .and_then(|kind| self.of(kind).ok())
     }
-}
-
-/// The kind of a difference of two values of `kind`: Bridgman's own subtraction
-/// rule (a point minus itself is its declared difference; any other kind minus
-/// itself is itself). Bridgman exposes no other public reading of it. Bridgman's
-/// refusal is boxed whole, because `QuantityError` is large.
-fn difference_of(
-    kind: Declared<'static>,
-) -> Result<Declared<'static>, Box<QuantityError<'static>>> {
-    kind.combine(Op::Sub, kind).map_err(Box::new)
 }
 
 /// `minimum` as an exact coordinate in `kind`'s canonical unit. The binary64
@@ -147,18 +218,20 @@ fn floor_coordinate(
 
 impl Kind for BridgmanKind {
     fn affine(self) -> Affine<Self> {
-        match self.0.role() {
+        let admitted = self.admitted();
+        match admitted.operand.role {
             AffineRole::Point => Affine::Point {
-                difference: BridgmanKind(difference_of(self.0).expect(ADMITTED)),
+                difference: Self {
+                    table: self.table,
+                    index: admitted.difference,
+                },
             },
             AffineRole::Linear | AffineRole::Difference => Affine::Linear,
         }
     }
 
     fn floor(self) -> Option<BigRational> {
-        self.0
-            .minimum()
-            .map(|minimum| floor_coordinate(self.0, minimum).expect(ADMITTED))
+        self.admitted().floor.clone()
     }
 }
 
@@ -247,10 +320,11 @@ impl DimensionAlgebra for BridgmanKind {
     type AlgebraError = BridgmanAlgebraError;
 
     fn dimensions(self) -> KindDimensions {
+        let operand = &self.admitted().operand;
         KindDimensions {
-            dimensions: self.0.dimensions().expect(ADMITTED).clone(),
-            grade: self.0.grade(),
-            point: matches!(self.0.role(), AffineRole::Point),
+            dimensions: operand.dimensions.clone(),
+            grade: operand.grade,
+            point: matches!(operand.role, AffineRole::Point),
         }
     }
 
@@ -289,11 +363,6 @@ pub enum BridgmanKindError {
         kind: Declared<'static>,
         source: Box<QuantityError<'static>>,
     },
-    /// A point kind whose difference kind Bridgman does not give.
-    Difference {
-        kind: Declared<'static>,
-        source: Box<QuantityError<'static>>,
-    },
     /// The declared floor cannot be read in the canonical unit.
     Floor {
         kind: Declared<'static>,
@@ -309,12 +378,6 @@ impl fmt::Display for BridgmanKindError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Dimensions { kind, source } => write!(formatter, "kind {kind}: {source}"),
-            Self::Difference { kind, source } => {
-                write!(
-                    formatter,
-                    "point kind {kind} has no difference kind: {source}"
-                )
-            }
             Self::Floor { kind, source } => write!(formatter, "floor of kind {kind}: {source}"),
             Self::FloorNotExact { kind, read } => {
                 write!(
@@ -335,9 +398,7 @@ impl fmt::Display for BridgmanKindError {
 impl Error for BridgmanKindError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Dimensions { source, .. }
-            | Self::Difference { source, .. }
-            | Self::Floor { source, .. } => Some(source.as_ref()),
+            Self::Dimensions { source, .. } | Self::Floor { source, .. } => Some(source.as_ref()),
             Self::FloorNotExact { .. } | Self::ForeignRegistry { .. } => None,
         }
     }
