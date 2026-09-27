@@ -23,9 +23,7 @@ pub enum Expr<K> {
 }
 
 /// Requires two expression types (factors) to agree. Two kinds compare by
-/// identity. A derived side has no kind, so a comparison with one compares
-/// dimensions, after refusing a point kind on the other side: what a product
-/// yields is never a point.
+/// identity; any comparison with a derived side is [`require_dimensions`].
 fn require_equal<K: DimensionAlgebra>(
     left: &Factor<K>,
     right: &Factor<K>,
@@ -34,37 +32,46 @@ fn require_equal<K: DimensionAlgebra>(
 ) -> Result<(), Error<K>> {
     match (left, right) {
         (Factor::Kind(expected), Factor::Kind(found)) => {
-            if expected != found {
-                return Err(Error::Kinds {
+            if expected == found {
+                Ok(())
+            } else {
+                Err(Error::Kinds {
                     context: kind_context(),
                     expected: *expected,
                     found: *found,
-                });
+                })
             }
         }
-        (Factor::Kind(kind), Factor::Derived(_)) | (Factor::Derived(_), Factor::Kind(kind)) => {
-            match kind.affine() {
-                Affine::Point { .. } => {
-                    return Err(Error::PointKind {
-                        context: dimension_context(),
-                        kind: *kind,
-                    });
-                }
-                Affine::Linear => same_dimensions(left, right, dimension_context)?,
-            }
-        }
-        (Factor::Derived(_), Factor::Derived(_)) => {
-            same_dimensions(left, right, dimension_context)?;
+        (Factor::Kind(_), Factor::Derived(_))
+        | (Factor::Derived(_), Factor::Kind(_))
+        | (Factor::Derived(_), Factor::Derived(_)) => {
+            require_dimensions(left, right, dimension_context)
         }
     }
-    Ok(())
 }
 
-fn same_dimensions<K: DimensionAlgebra>(
+/// Requires two factors, at least one of them derived, to have equal
+/// dimensions. A derived side has no kind, and what a product yields is never a
+/// point, so a point kind on either side is refused first (by the kind's affine
+/// role, as totals refuse it), whatever the dimensions.
+pub(crate) fn require_dimensions<K: DimensionAlgebra>(
     left: &Factor<K>,
     right: &Factor<K>,
     context: impl FnOnce() -> DimensionContext,
 ) -> Result<(), Error<K>> {
+    let point = [left, right].into_iter().find_map(|side| match side {
+        Factor::Kind(kind) => match kind.affine() {
+            Affine::Point { .. } => Some(*kind),
+            Affine::Linear => None,
+        },
+        Factor::Derived(_) => None,
+    });
+    if let Some(kind) = point {
+        return Err(Error::PointKind {
+            context: context(),
+            kind,
+        });
+    }
     let (left, right) = (left.dimensions(), right.dimensions());
     if left == right {
         Ok(())

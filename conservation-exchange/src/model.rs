@@ -8,6 +8,7 @@ use num_traits::{Signed, Zero};
 use serde::{Deserialize, Serialize};
 
 use crate::Constraint;
+use crate::expression::require_dimensions;
 
 /// An exact rational in canonical base units. Binary floats are never implicit inputs.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -232,19 +233,16 @@ impl<K: DimensionAlgebra> ValidatedModel<K> {
                     "capacity weights require nonnegative stocks and weights",
                 ));
             }
-            let dimensions = K::product(&Factor::Kind(weight.kind), &Factor::Kind(stock.kind))
+            let weighted = K::product(&Factor::Kind(weight.kind), &Factor::Kind(stock.kind))
                 .map_err(Error::Algebra)?;
-            let maximum = capacity.maximum.kind.dimensions();
-            if dimensions != maximum {
-                return Err(Error::Dimensions {
-                    context: DimensionContext::Capacity {
-                        capacity: id.clone(),
-                        stock: stock.id.clone(),
-                    },
-                    left: dimensions,
-                    right: maximum,
-                });
-            }
+            require_dimensions(
+                &Factor::Derived(weighted),
+                &Factor::Kind(capacity.maximum.kind),
+                || DimensionContext::Capacity {
+                    capacity: id.clone(),
+                    stock: stock.id.clone(),
+                },
+            )?;
         }
         Ok(())
     }
