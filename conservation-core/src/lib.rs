@@ -109,7 +109,7 @@ pub trait Kind: Copy + Eq + Ord + Hash + fmt::Debug + fmt::Display {
 pub trait DimensionAlgebra: Kind {
     /// What is compared: a kind's dimensions, or a product's. Equality is
     /// dimensional comparison and says nothing of affine role.
-    type Dimensions: Clone + Eq + fmt::Debug;
+    type Dimensions: Clone + Eq + fmt::Debug + fmt::Display;
     /// Why a product or quotient is refused or has no representation.
     type AlgebraError: Error + Clone + Eq;
     /// Returns this kind's dimensions.
@@ -148,11 +148,11 @@ impl<K: DimensionAlgebra> Factor<K> {
 }
 
 impl<K: DimensionAlgebra> fmt::Display for Factor<K> {
-    /// A kind by its name; derived dimensions by their `Debug` form.
+    /// A kind by its name; derived dimensions as they display.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Kind(kind) => fmt::Display::fmt(kind, formatter),
-            Self::Derived(dimensions) => write!(formatter, "{dimensions:?}"),
+            Self::Derived(dimensions) => fmt::Display::fmt(dimensions, formatter),
         }
     }
 }
