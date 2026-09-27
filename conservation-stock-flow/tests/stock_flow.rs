@@ -1,10 +1,10 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use conservation_core::{AxisId, BalanceLaw, Grade, GradedLaw, Provenance};
+use conservation_core::{AxisId, BalanceLaw, BalanceLawError, Grade, GradedLaw, Provenance};
 use conservation_dynamics::{
     ExactState, FlowSpec, FlowTopology, ProcessDefinition, ProcessId, Rationing, StockDefinition,
-    StockId,
+    StockFlowError, StockId,
 };
 use conservation_stock_flow::{
     BoundaryCorrespondence, BoundaryId, BoundaryVerdict, CarrierError, ChannelId, ExactAmounts,
@@ -232,6 +232,25 @@ fn carrier_compiles_total_exact_matrices_in_canonical_named_order() {
         Some(&q(-1))
     );
     assert_eq!(system.identity(), carrier(true).identity());
+}
+
+#[test]
+fn carrier_errors_chain_the_errors_they_wrap() {
+    use std::error::Error as _;
+    let settlement = CarrierError::<TestKind>::from(StockFlowError::TopologyMismatch);
+    assert_eq!(
+        settlement
+            .source()
+            .and_then(|source| source.downcast_ref::<StockFlowError<TestKind>>()),
+        Some(&StockFlowError::TopologyMismatch)
+    );
+    let law = CarrierError::<TestKind>::from(BalanceLawError::Empty);
+    assert_eq!(
+        law.source()
+            .and_then(|source| source.downcast_ref::<BalanceLawError>()),
+        Some(&BalanceLawError::Empty)
+    );
+    assert!(CarrierError::<TestKind>::CarrierMismatch.source().is_none());
 }
 
 #[test]
