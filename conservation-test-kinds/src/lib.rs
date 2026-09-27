@@ -5,7 +5,7 @@
 
 use std::fmt;
 
-use conservation_core::{Affine, DimensionAlgebra, Kind, KindRegistry};
+use conservation_core::{Affine, DimensionAlgebra, Factor, Kind, KindRegistry};
 use num_rational::BigRational;
 use num_traits::Zero;
 
@@ -216,17 +216,17 @@ impl DimensionAlgebra for TestKind {
     }
 
     fn product(
-        left: &TestDimensions,
-        right: &TestDimensions,
+        left: &Factor<Self>,
+        right: &Factor<Self>,
     ) -> Result<TestDimensions, TestDimensionOverflow> {
-        TestDimensions::combine(left, right, i32::checked_add)
+        TestDimensions::combine(&left.dimensions(), &right.dimensions(), i32::checked_add)
     }
 
     fn quotient(
-        left: &TestDimensions,
-        right: &TestDimensions,
+        left: &Factor<Self>,
+        right: &Factor<Self>,
     ) -> Result<TestDimensions, TestDimensionOverflow> {
-        TestDimensions::combine(left, right, i32::checked_sub)
+        TestDimensions::combine(&left.dimensions(), &right.dimensions(), i32::checked_sub)
     }
 }
 

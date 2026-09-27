@@ -21,10 +21,10 @@ use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
 
 use bridgman_core::{
-    AffineRole, Dimensions, Grade, Kind as Declared, Operand, ProductOp, Quantity, QuantityError,
-    Registry,
+    AffineRole, DerivationError, Graded, Kind as Declared, Operand, ProductOp, Quantity,
+    QuantityError, Registry, Side, derive,
 };
-use conservation_core::{Affine, DimensionAlgebra, Kind, KindRegistry};
+use conservation_core::{Affine, DimensionAlgebra, Factor, Kind, KindRegistry};
 use num_rational::BigRational;
 
 /// What admission read of one kind of a registry.
@@ -35,7 +35,8 @@ struct Admitted {
     difference: usize,
     /// The declared floor as an exact coordinate in the canonical unit.
     floor: Option<BigRational>,
-    /// Dimensions, grade and affine role (`Declared::operand`).
+    /// Dimensions and grade (`operand.graded`, the kind's `Dimensions`) and
+    /// affine role (`Declared::operand`).
     operand: Operand,
 }
 
@@ -235,121 +236,48 @@ impl Kind for BridgmanKind {
     }
 }
 
-/// What a product or quotient in conservation needs to know of a Bridgman kind:
-/// its dimensions, its grade in G3, and whether its values are points.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct KindDimensions {
-    pub dimensions: Dimensions,
-    pub grade: Grade,
-    /// Bridgman `AffineRole::Point`. A point takes part in no product.
-    pub point: bool,
-}
-
-impl fmt::Display for KindDimensions {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{} grade {}", self.dimensions, self.grade)?;
-        if self.point {
-            formatter.write_str(" point")?;
-        }
-        Ok(())
-    }
-}
-
-/// Why Bridgman gives a product or quotient no dimensions.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum BridgmanAlgebraError {
-    /// An operand is a point kind (Bridgman `derive`: `Underived::Point`).
-    Point {
-        op: ProductOp,
-        left: KindDimensions,
-        right: KindDimensions,
-    },
-    /// G3 gives the product no single grade (`Grade::product` is `None`).
-    Ungraded {
-        op: ProductOp,
-        left: Grade,
-        right: Grade,
-    },
-}
-
-impl fmt::Display for BridgmanAlgebraError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Point { op, left, right } => {
-                write!(
-                    formatter,
-                    "a point takes part in no {op:?}: ({left}) and ({right})"
-                )
-            }
-            Self::Ungraded { op, left, right } => {
-                write!(
-                    formatter,
-                    "{op:?} of grades {left} and {right} has no single grade"
-                )
-            }
-        }
-    }
-}
-
-impl Error for BridgmanAlgebraError {}
-
-/// The grade of `left op right`, refusing points as Bridgman's `derive` does.
-fn graded(
-    left: &KindDimensions,
+/// `left op right` by Bridgman's `derive`: a kind factor is read as its admitted
+/// operand, a derived one as its dimensions and grade. Bridgman refuses a point
+/// kind and an ungraded product; its refusal names the factors it was given.
+fn derived(
+    left: &Factor<BridgmanKind>,
     op: ProductOp,
-    right: &KindDimensions,
-) -> Result<Grade, BridgmanAlgebraError> {
-    if left.point || right.point {
-        return Err(BridgmanAlgebraError::Point {
-            op,
-            left: left.clone(),
-            right: right.clone(),
-        });
+    right: &Factor<BridgmanKind>,
+) -> Result<Graded, DerivationError<Factor<BridgmanKind>>> {
+    fn read(factor: &Factor<BridgmanKind>) -> bridgman_core::Factor<'_> {
+        match factor {
+            Factor::Kind(kind) => bridgman_core::Factor::Kind(&kind.admitted().operand),
+            Factor::Derived(graded) => bridgman_core::Factor::Derived(graded),
+        }
     }
-    left.grade
-        .product(op, right.grade)
-        .ok_or(BridgmanAlgebraError::Ungraded {
-            op,
-            left: left.grade,
-            right: right.grade,
+    derive(read(left), op, read(right)).map_err(|refusal| {
+        refusal.map_kinds(|side| match side {
+            Side::Left => left.clone(),
+            Side::Right => right.clone(),
         })
+    })
 }
 
 impl DimensionAlgebra for BridgmanKind {
-    type Dimensions = KindDimensions;
-    type AlgebraError = BridgmanAlgebraError;
+    type Dimensions = Graded;
+    type AlgebraError = DerivationError<Factor<BridgmanKind>>;
 
-    fn dimensions(self) -> KindDimensions {
-        let operand = &self.admitted().operand;
-        KindDimensions {
-            dimensions: operand.graded.dimensions.clone(),
-            grade: operand.graded.grade,
-            point: matches!(operand.role, AffineRole::Point),
-        }
+    fn dimensions(self) -> Graded {
+        self.admitted().operand.graded.clone()
     }
 
     fn product(
-        left: &KindDimensions,
-        right: &KindDimensions,
-    ) -> Result<KindDimensions, BridgmanAlgebraError> {
-        let grade = graded(left, ProductOp::Mul, right)?;
-        Ok(KindDimensions {
-            dimensions: &left.dimensions * &right.dimensions,
-            grade,
-            point: false,
-        })
+        left: &Factor<Self>,
+        right: &Factor<Self>,
+    ) -> Result<Graded, DerivationError<Factor<Self>>> {
+        derived(left, ProductOp::Mul, right)
     }
 
     fn quotient(
-        left: &KindDimensions,
-        right: &KindDimensions,
-    ) -> Result<KindDimensions, BridgmanAlgebraError> {
-        let grade = graded(left, ProductOp::Div, right)?;
-        Ok(KindDimensions {
-            dimensions: &left.dimensions / &right.dimensions,
-            grade,
-            point: false,
-        })
+        left: &Factor<Self>,
+        right: &Factor<Self>,
+    ) -> Result<Graded, DerivationError<Factor<Self>>> {
+        derived(left, ProductOp::Div, right)
     }
 }
 

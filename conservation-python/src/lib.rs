@@ -37,6 +37,7 @@ fn failure(error: core::Error<NativeKind>) -> PyErr {
         core::Error::Invalid(_) => InvalidExchange::new_err(message),
         core::Error::Kinds { .. } => DimensionError::new_err(message),
         core::Error::Dimensions { .. } => DimensionError::new_err(message),
+        core::Error::PointKind { .. } => DimensionError::new_err(message),
         core::Error::Algebra(_) => DimensionError::new_err(message),
         core::Error::BelowFloor { .. } => DomainError::new_err(message),
         core::Error::UnknownKind { .. } => UnknownKindError::new_err(message),

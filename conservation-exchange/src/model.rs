@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
 
-use conservation_core::{DimensionAlgebra, nonblank};
+use conservation_core::{DimensionAlgebra, Factor, nonblank};
 use num_rational::BigRational;
 use num_traits::{Signed, Zero};
 use serde::{Deserialize, Serialize};
@@ -232,7 +232,7 @@ impl<K: DimensionAlgebra> ValidatedModel<K> {
                     "capacity weights require nonnegative stocks and weights",
                 ));
             }
-            let dimensions = K::product(&weight.kind.dimensions(), &stock.kind.dimensions())
+            let dimensions = K::product(&Factor::Kind(weight.kind), &Factor::Kind(stock.kind))
                 .map_err(Error::Algebra)?;
             let maximum = capacity.maximum.kind.dimensions();
             if dimensions != maximum {
@@ -471,6 +471,12 @@ pub enum Error<K: DimensionAlgebra> {
         context: DimensionContext,
         left: K::Dimensions,
         right: K::Dimensions,
+    },
+    /// A point kind was compared with a computed quantity. What a product
+    /// yields is never a point, whatever the dimensions.
+    PointKind {
+        context: DimensionContext,
+        kind: K,
     },
     Algebra(K::AlgebraError),
     /// The amount lies below the kind's floor. `kind.floor()` recovers the floor.

@@ -40,7 +40,10 @@ not participate in these storage constraints.
 A leg, delta, boundary or fact value must have its slot's, port's or fact's kind
 (a delta: the slot kind's difference). A mismatch is refused with `Kinds`, which
 names both kinds, even when the two kinds have equal dimensions. Products and
-quotients derive dimensions, and a derived quantity is compared by dimensions.
+quotients derive dimensions (the kind's algebra may refuse a factor, as Bridgman
+refuses a point kind), and a derived quantity is compared by dimensions. A point
+kind compared with a derived quantity is refused with `PointKind`, which names
+the kind, even when the dimensions agree.
 
 A law declares stock roles, signed boundary inputs, required participants,
 evaluated facts and constraints. An `Exchange` binds each role to a distinct
@@ -116,8 +119,9 @@ before supplying canonical quantities.
 Expressions support exact constants; before/after/delta stock-role values;
 declared boundary inputs and owner facts; sums, products and quotients. Addition
 and comparisons of two kinds require the same kind. Products and quotients derive
-their dimensions, including dimensioned conversion coefficients, and a comparison
-with a derived side requires matching dimensions. Division by zero is an
+their dimensions, including dimensioned conversion coefficients, and chain: a
+product's result is a factor of the next. A comparison with a derived side
+requires matching dimensions and a side that is not a point kind. Division by zero is an
 error. Nesting above 64 and unknown expression variants are rejected.
 
 This covers linear transforms and evaluated nonlinear algebra such as `p*p/(2*m)`.

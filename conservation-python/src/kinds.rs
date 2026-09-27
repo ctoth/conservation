@@ -7,7 +7,7 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::ptr;
 
-use conservation_core::{Affine, DimensionAlgebra, Kind, KindRegistry, nonblank};
+use conservation_core::{Affine, DimensionAlgebra, Factor, Kind, KindRegistry, nonblank};
 use num_rational::BigRational;
 
 pub(crate) struct NativeTable {
@@ -352,17 +352,17 @@ impl DimensionAlgebra for NativeKind {
     }
 
     fn product(
-        left: &NativeDimensions,
-        right: &NativeDimensions,
+        left: &Factor<Self>,
+        right: &Factor<Self>,
     ) -> Result<NativeDimensions, DimensionOverflow> {
-        NativeDimensions::combine(left, right, i32::checked_add)
+        NativeDimensions::combine(&left.dimensions(), &right.dimensions(), i32::checked_add)
     }
 
     fn quotient(
-        left: &NativeDimensions,
-        right: &NativeDimensions,
+        left: &Factor<Self>,
+        right: &Factor<Self>,
     ) -> Result<NativeDimensions, DimensionOverflow> {
-        NativeDimensions::combine(left, right, i32::checked_sub)
+        NativeDimensions::combine(&left.dimensions(), &right.dimensions(), i32::checked_sub)
     }
 }
 

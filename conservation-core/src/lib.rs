@@ -102,23 +102,59 @@ pub trait Kind: Copy + Eq + Ord + Hash + fmt::Debug + fmt::Display {
 }
 
 /// Dimensional comparison, product and quotient. Only conservation-exchange requires it.
+///
+/// A product reads its factors: a kind, which the implementation may refuse (a
+/// point kind, for one), or the dimensions of another product. What it yields,
+/// and what is compared, are dimensions alone.
 pub trait DimensionAlgebra: Kind {
-    /// A kind's dimensions. Equality is dimensional comparison.
-    type Dimensions: Clone + Eq + fmt::Debug + fmt::Display;
-    /// Why a product or quotient has no representation (for example exponent overflow).
+    /// What is compared: a kind's dimensions, or a product's. Equality is
+    /// dimensional comparison and says nothing of affine role.
+    type Dimensions: Clone + Eq + fmt::Debug;
+    /// Why a product or quotient is refused or has no representation.
     type AlgebraError: Error + Clone + Eq;
     /// Returns this kind's dimensions.
     fn dimensions(self) -> Self::Dimensions;
-    /// Returns the dimensions of a product.
+    /// Returns the dimensions of `left · right`.
     fn product(
-        left: &Self::Dimensions,
-        right: &Self::Dimensions,
+        left: &Factor<Self>,
+        right: &Factor<Self>,
     ) -> Result<Self::Dimensions, Self::AlgebraError>;
-    /// Returns the dimensions of a quotient.
+    /// Returns the dimensions of `left / right`.
     fn quotient(
-        left: &Self::Dimensions,
-        right: &Self::Dimensions,
+        left: &Factor<Self>,
+        right: &Factor<Self>,
     ) -> Result<Self::Dimensions, Self::AlgebraError>;
+}
+
+/// A factor of a product or quotient, and the type of an expression over
+/// kinds: a declared kind, or the dimensions a product derived, which have no
+/// kind of their own.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Factor<K: DimensionAlgebra> {
+    /// A declared kind.
+    Kind(K),
+    /// The dimensions of a product or quotient.
+    Derived(K::Dimensions),
+}
+
+impl<K: DimensionAlgebra> Factor<K> {
+    /// The factor's dimensions.
+    pub fn dimensions(&self) -> K::Dimensions {
+        match self {
+            Self::Kind(kind) => kind.dimensions(),
+            Self::Derived(dimensions) => dimensions.clone(),
+        }
+    }
+}
+
+impl<K: DimensionAlgebra> fmt::Display for Factor<K> {
+    /// A kind by its name; derived dimensions by their `Debug` form.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Kind(kind) => fmt::Display::fmt(kind, formatter),
+            Self::Derived(dimensions) => write!(formatter, "{dimensions:?}"),
+        }
+    }
 }
 
 /// Resolves kind names once, at a document or foreign-language boundary.
