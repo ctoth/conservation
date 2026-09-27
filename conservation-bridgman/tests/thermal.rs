@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use bridgman_core::{Grade, Op, ProductOp, QuantityError, Registry};
+use bridgman_core::{DerivationError, Grade, Op, ProductOp, QuantityError, Registry};
 use conservation_bridgman::*;
 use conservation_core::{Affine, DimensionAlgebra, Kind, KindRegistry};
 use conservation_dynamics::{
@@ -244,10 +244,10 @@ fn registry_resolves_every_name_it_displays() {
 #[test]
 fn typed_kinds_cross_only_their_own_registry() {
     assert_eq!(
-        thermal().of(bridgman_core::profile::registry().kind("energy").unwrap()),
+        thermal().of(bridgman_core::thermal().kind("energy").unwrap()),
         Ok(kind("energy"))
     );
-    let leaked = BridgmanKinds::leak(bridgman_core::profile::registry().clone()).unwrap();
+    let leaked = BridgmanKinds::leak(bridgman_core::thermal().clone()).unwrap();
     assert_ne!(leaked.resolve("energy").unwrap(), kind("energy"));
     assert!(matches!(
         thermal().of(leaked.resolve("energy").unwrap().bridgman()),
@@ -260,11 +260,15 @@ fn unresolved_dimensions_are_refused_at_admission() {
     let registry = Registry::from_yaml("schema: 4\nkinds:\n  - {id: vague}\nunits: []\n");
     assert!(registry.is_ok());
     let error = BridgmanKinds::leak(registry.unwrap()).err().unwrap();
-    let unresolved = QuantityError::UnresolvedDimensions("vague".into());
+    let BridgmanKindError::Dimensions { kind: vague, .. } = &error else {
+        panic!("expected unresolved dimensions, got {error:?}");
+    };
+    assert_eq!(vague.id(), "vague");
+    let unresolved =
+        QuantityError::Derivation(DerivationError::UnresolvedDimensions { kind: *vague });
     assert!(matches!(
         &error,
-        BridgmanKindError::Dimensions { kind, source }
-            if kind.id() == "vague" && **source == unresolved
+        BridgmanKindError::Dimensions { source, .. } if **source == unresolved
     ));
     assert_eq!(
         std::error::Error::source(&error).and_then(|source| source.downcast_ref::<QuantityError>()),

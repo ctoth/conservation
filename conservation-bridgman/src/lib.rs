@@ -52,9 +52,9 @@ pub struct BridgmanKinds {
 }
 
 impl BridgmanKinds {
-    /// Bridgman's bundled thermal profile (`bridgman_core::profile::registry`).
+    /// Bridgman's bundled thermal catalog (`bridgman_core::thermal`).
     pub fn thermal() -> Result<Self, BridgmanKindError> {
-        Self::new(bridgman_core::profile::registry())
+        Self::new(bridgman_core::thermal())
     }
 
     /// Admits a registry the process already holds for its lifetime.
@@ -117,7 +117,9 @@ impl KindRegistry for BridgmanKinds {
 /// rule (a point minus itself is its declared difference; any other kind minus
 /// itself is itself). Bridgman exposes no other public reading of it. Bridgman's
 /// refusal is boxed whole, because `QuantityError` is large.
-fn difference_of(kind: Declared<'static>) -> Result<Declared<'static>, Box<QuantityError>> {
+fn difference_of(
+    kind: Declared<'static>,
+) -> Result<Declared<'static>, Box<QuantityError<'static>>> {
     kind.combine(Op::Sub, kind).map_err(Box::new)
 }
 
@@ -285,17 +287,17 @@ pub enum BridgmanKindError {
     /// The kind's dimensions are unresolved.
     Dimensions {
         kind: Declared<'static>,
-        source: Box<QuantityError>,
+        source: Box<QuantityError<'static>>,
     },
     /// A point kind whose difference kind Bridgman does not give.
     Difference {
         kind: Declared<'static>,
-        source: Box<QuantityError>,
+        source: Box<QuantityError<'static>>,
     },
     /// The declared floor cannot be read in the canonical unit.
     Floor {
         kind: Declared<'static>,
-        source: Box<QuantityError>,
+        source: Box<QuantityError<'static>>,
     },
     /// The floor read in the canonical unit (`read`) is not the declared floor.
     FloorNotExact { kind: Declared<'static>, read: f64 },
