@@ -255,7 +255,14 @@ fn products_are_bridgman_derivations_over_factors() {
             ..
         } if *point == enthalpy
     ));
-    assert!(refusal.to_string().contains("enthalpy"));
+    // The derived factor is shown by Bridgman's own Graded rendering.
+    assert_eq!(
+        refusal.to_string(),
+        format!(
+            "M:1,L:2,T:-2 grade 0 {} enthalpy names point kind enthalpy, which takes no part in products",
+            ProductOp::Mul
+        )
+    );
 }
 
 /// A law whose one constraint says `left = right`, over a slot `body` of

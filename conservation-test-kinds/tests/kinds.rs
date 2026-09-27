@@ -54,6 +54,15 @@ fn declaration_order_is_name_order() {
 }
 
 #[test]
+fn a_factor_displays_as_its_kind_or_its_dimensions() {
+    assert_eq!(Factor::Kind(TestKind::Energy).to_string(), "energy");
+    assert_eq!(
+        Factor::<TestKind>::Derived(TestKind::EnergyPerMaterial.dimensions()).to_string(),
+        "energy^1·material^-1"
+    );
+}
+
+#[test]
 fn energy_and_torque_share_dimensions_but_are_distinct_kinds() {
     assert_eq!(TestKind::Energy.dimensions(), TestKind::Torque.dimensions());
     assert_ne!(TestKind::Energy, TestKind::Torque);
