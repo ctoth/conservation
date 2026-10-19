@@ -90,6 +90,14 @@ Seed tiers (unverified):
     noise share constant (1−ρ); small ρ: gain ≈ 2√(I·KL). So the KL ≈ I turnover must come
     from non-Gaussian error (Gao's β term). Published-coefficient filter: ρ ≈ α/√2,
     I ≥ −½log(1−α²/2) ≈ α²/4 ⇒ conjecture predicts β_bon ≈ 1 across RM sizes.
+  - β check DONE (2026-10-19), values read off Gao Fig. 3 (p.5; no numeric table exists):
+    α_bon ≈ 0.50 (≈3M RM) → 0.66 (3B); β_bon ≈ 0.12 → 0.09. So β_bon ≈ 0.1, not ≈ 1.
+    Peak KL* = α²/4β² ≈ 4.3 nats (small RM) → 13.4 nats (3B). Gaussian I from ρ = α/(√2·c),
+    c ∈ [0.92, 1] (ratio of E[max of n normals] to √(2·KL_bon)): I ≈ 0.07–0.08 nats → 0.12–0.15
+    nats. KL*/I ≈ 54–65 (small) → 90–109 (3B): peak sits ~2 orders of magnitude past
+    Gaussian-copula I, and the ratio grows with RM size. Gaussian I is a lower bound at fixed ρ,
+    so the conjecture survives only if proxy–gold dependence is strongly non-Gaussian
+    (I of 4–13 nats at ρ ≈ 0.4–0.5). Settling it needs a direct MI measurement.
   - Theory hook (from memory, unchecked): Donsker–Varadhan/transportation: σ-subgaussian gold ⇒
     gain ≤ σ√(2KL); Russo & Zou 2016 is the MI version.
   - Real test (needs "make it so"): open replication; measure I(proxy;gold) by a rank-based
