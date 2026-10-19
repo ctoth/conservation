@@ -12,7 +12,21 @@ disturbance/robustness, test/verification. Research only; no crate code until Q 
 
 - Work happens on `master` in this repo (Q, 2026-10-19). `papers/` lives here; `.gitignore`
   already excludes `*.pdf` and `*.png` (case-insensitive).
-- Step 1 (research sweep) starting.
+- Step 1 sweep done: `reports/research-bode-conservation-coverage.md` (corrected seed list,
+  tiers A–F with identifiers, retrieval priority in its Recommendations). Claims checked by me
+  against primary sources (2026-10-19): Kitano 2007 (MSB, full text: asks whether the
+  robustness/fragility trade-off is a conservation principle, cites Bode as "conservation of
+  sensitivity", says whether conservation exists "remains open"); Kitano 2010 (abstract:
+  robustness may be conserved only when the system is sufficiently optimized); Martins &
+  Dahleh 2008 (author PDF text: "The channel noise, the plant's initial condition and the
+  disturbance are mutually independent"; Def. 5.1 channel = a given map plus a noise process
+  independent of plant and disturbance; symbols lost in extraction, so the fixed-law reading
+  still needs the typeset equations); Kent 2016 (0 matches for probab|entropy|measure);
+  Pacelli & Theodorou 2026 (arXiv 2603.18454, IEEE L-CSS: bound where the closed-loop state
+  distribution limits what the sensor can extract); Recht et al. 2019 (abstract: drops "not
+  caused by adaptivity"). Everything else in the report is the sweep agent's claim, unchecked.
+- Pending from Q: which "Narang et al." (message cut off). Guess, unconfirmed: Narang et al.
+  2021, "Do Transformer Modifications Transfer…" (EMNLP).
 
 ## Plan
 
@@ -35,6 +49,10 @@ Seed tiers (unverified):
 - D, test strand: Inozemtseva & Holmes 2014; Bailey, Borwein, López de Prado & Zhu 2014
   (backtest overfitting); Benjamini & Hochberg 1995; Dwork et al. 2015 (reusable holdout);
   Recht et al. 2019.
+- E, framework (Q, 2026-10-19): Kent, "Information Flow in Logical Environments", arXiv
+  1603.03475 (verified via arXiv API): Barwise–Seligman channel theory over arbitrary logical
+  environments (semantic institutions). Dependencies: Barwise & Seligman 1997; Goguen &
+  Burstall 1992.
 
 ## Decisions and why
 
@@ -45,6 +63,18 @@ Seed tiers (unverified):
   input). They do apply to any experiments the study runs, and belong in the corpus as
   instances of test coverage under selection pressure.
 
+- Working framing (Q, 2026-10-19): Goodhart is optimization acting on the channel's
+  regularities, not on the verifier; the verifier looks unchanged while its information about
+  the goal falls toward zero. Martins & Dahleh assume a fixed channel (Q's claim; not yet
+  checked against the paper), so they don't cover it. In Barwise–Seligman terms: the verifier
+  is the classification, `pass ⊢ goal` is a constraint sound only on normal tokens, and
+  optimization moves the token population onto abnormal ones. Floor: I(V;G) ≤ H(V) → 0 as
+  pass rate → 1. With v = f(x) and g = h(x), p(v|g) is induced by p(x), which the optimizer
+  controls: the channel is endogenous. Hypothesis to test: the budget term (analogue of
+  Σ Re p_unstable) measures the abnormal-token set the optimizer can reach. Leads sent to the
+  sweep: performative prediction (Perdomo et al. 2020), strategic classification (Hardt et al.
+  2016).
+
 ## Surprises
 
 - An untracked `conservation-dynamics/tests/compiled_conformance.proptest-regressions` held a
@@ -53,4 +83,6 @@ Seed tiers (unverified):
 
 ## Next step
 
-Run the step 1 sweep.
+Step 2: retrieve + read notes, in the report's priority order, starting with Kitano 2007 and
+2010 (closest prior statement of the thesis) and the Tier F endogenous-channel set
+(Perdomo et al. 2020, Russo & Zou 2016, Pacelli & Theodorou 2026).
