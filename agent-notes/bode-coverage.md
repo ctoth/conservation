@@ -159,7 +159,15 @@ Seed tiers (unverified):
   and raise the true-cost floor (Pacelli's fixed point, reinterpreted). Non-Lipschitz is a W1
   problem (Perdomo, Narang), not an MI one: binary verifier ⇒ I_π ≤ H(V) ≤ log 2. Likely break:
   eq. (2) needs sensor noise iid and independent of process noise; h_π can make it
-  state-dependent. Formal write-up or toy model waits on Q.
+  state-dependent.
+- Write-up done (Q "1Go", read as item 1 = formal write-up): `reports/pacelli-policy-dependent-sensor.md`.
+  From Pacelli pp. 2–4 page images: h enters Theorem 1 only via p(y|x) in (5). Derived (mine,
+  unreviewed): per-policy bound J[π] ≥ J_irr(I(π)), so J_ol − J[π] ≤ J_ol − J_irr(I(π)) with I
+  under π's own distribution; history-dependent channel → I(π) = Σ I(x_t; y_t | y_<t);
+  Prop 2 holds for uniformly L-Lipschitz {h_π}; binary verifier budget (T+1) log 2 works for
+  Thm 1, not Thm 2 (fails Def 1(a)). Gaps: no link from proxy optimization to falling I(π);
+  deterministic continuous verifier ⇒ I = ∞; state-dependent noise breaks (13). Side result
+  via Russo Prop 1: BoN gold gain ≤ σ√(2·min(log n, n·I(p;g))).
   Shared-file steps (index.md, keymap, reconcile) were skipped by design; run them once all land.
 - The Kitano 2007 agent sent Q's email to the Unpaywall API in a manual curl. Cause:
   research-papers-plugin `skills/paper-retriever/SKILL.md` Option 2 step 2 says to query
