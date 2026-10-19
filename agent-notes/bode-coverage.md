@@ -25,8 +25,11 @@ disturbance/robustness, test/verification. Research only; no crate code until Q 
   Pacelli & Theodorou 2026 (arXiv 2603.18454, IEEE L-CSS: bound where the closed-loop state
   distribution limits what the sensor can extract); Recht et al. 2019 (abstract: drops "not
   caused by adaptivity"). Everything else in the report is the sweep agent's claim, unchecked.
-- Pending from Q: which "Narang et al." (message cut off). Guess, unconfirmed: Narang et al.
-  2021, "Do Transformer Modifications Transfer…" (EMNLP).
+- Tier F addition (Q, 2026-10-19; verified on arXiv): Narang, Faulkner, Drusvyatskiy, Fazel &
+  Ratliff, "Multiplayer Performative Prediction: Learning in Decision-Dependent Games",
+  arXiv 2201.03398. Population data reacts to several competing decision makers; solution
+  concepts are performatively stable equilibria and Nash equilibria (efficiently findable
+  only for monotone games). Relevance: several optimizers jointly shaping one channel.
 
 ## Plan
 
