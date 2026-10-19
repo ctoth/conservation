@@ -1,6 +1,7 @@
 # The gold peak is set by the regression curve of gold on proxy
 
-Status: **derived by hand, unchecked numerically and unreviewed.** Answers open questions 2, 3
+Status: **derived by hand; §1 and §3 checked numerically (see "Numeric check" below); not
+reviewed by anyone else.** Answers open questions 2, 3
 (partly), 4, 8 (partly) and 13 from `agent-notes/bode-coverage.md`, for two optimizers: the
 KL-regularized tilt and best-of-n. Follows `reports/goodhart-toy.md`.
 
@@ -99,8 +100,80 @@ Typeset page (IEEE TAC 53(7), p. 1609), Definition 5.1: channel z(k) = f(k, vᵏ
 map and the noise process c "assumed mutually independent of x(0) and d"; the encoder chooses
 only the input v. The channel's law is fixed. Confirms the reading in the task note.
 
+## Numeric check
+
+Script: `research/regression_curve_check.py` (stdlib; Q's "make it so", 2026-10-19). Run:
+`python research/regression_curve_check.py` (~7 s). Models: the toy (ε = 1e-6), and r = g + noise
+on a grid (g ∈ [−8, 8] step 0.05, r ∈ [−30, 30] step 0.1) for three gold/noise pairs. A grid model
+is a discrete model, so the identities should hold to rounding.
+
+**§1 and §3 hold.** Worst absolute gaps over λ ∈ {0.01, 0.3, 1, 3, 10} and n ∈ {1, 2, 5, 20, 100, 1000}:
+
+| model | tilt rate: central difference vs Σ Δm·K_λ (Cov agrees to 1e-9) | BoN increment | tilt path: ∫₀^Λ K_λ dλ vs ΔP(R > t) | budget m(r_max) − E₀m | tilt at the top |
+|---|---|---|---|---|---|
+| toy | 3.9e-12 | 8.3e-17 | 5.4e-9 | −0.3000 | −0.3000 |
+| N(0,1) gold, N(0, 0.5) noise | 2.3e-11 | 2.5e-16 | 4.5e-12 | +7.998 | +7.998 |
+| N(0,1) gold, t₃(0.5) noise | 1.4e-9 | 8.6e-17 | 3.7e-11 | +0.134 | +0.134 |
+| t₃(1) gold, N(0,1) noise | 7.0e-10 | 3.2e-16 | 3.3e-11 | +7.974 | +7.974 |
+
+Best-of-n at n = 10¹² reaches the budget for the toy and the t₃-noise model but not for the
+two Gaussian-noise models (6.36, 7.85). There the top levels carry mass ~10⁻³⁰⁰, so no
+practical n reaches them. The identity is a limit statement, and with light-tailed noise the
+limit is effectively unreachable.
+
+**The key fact E_π[g | r] = m(r) holds independently.**
+- Toy: best-of-n via m matches the closed form P(best is good) = (1−ε)ⁿ − (0.7−ε)ⁿ for
+  n from 1 to 10⁷.
+- Grid models: Monte Carlo best-of-n sampled from the joint (20000 trials, n ∈ {1, 4, 16, 64})
+  is within 4 standard errors of the m formula in all 12 cases. The largest deviation is
+  2.4 se (t₃ gold, n = 64).
+
+**Shape of m (§2).**
+- Gaussian noise: m(t) = 0.8t to 1e-6 for |t| < 5, the linear 1/(1+σ²) slope, as predicted.
+- t₃ gold with Gaussian noise: non-decreasing on the whole grid.
+- Gaussian gold with t₃ noise: m rises to 1.666 at t = 3.1, then falls monotonically:
+  m(8) = 0.54, m(16) = 0.25, m(30) = 0.13. It is redescending toward E g = 0, as predicted.
+  The +0.134 budget is m at the grid edge, an artifact of truncation; untruncated, the budget is
+  lim m − E g = 0.
+
+The Gaussian-noise rows fit a more general statement than the one in §2: log-concave noise
+gives a monotone likelihood ratio in (t, g), so m is non-decreasing for every gold law. Under
+that statement, log-concave noise means no overoptimization, whatever gold's tails are. This
+is Karlin's total-positivity result, which I'm citing from memory and have not checked. If it
+holds, the Q3 split in §2 is really about whether the noise is log-concave, not about which
+side has heavier tails.
+
+**Gold peaks.** Gold is measured relative to E₀g. BoN is swept over n = 2^k, so its peak is
+located only to a factor of 2.
+
+| model | I₀ (nats) | tilt peak | BoN peak |
+|---|---|---|---|
+| toy | 0.229 | +0.70 at KL 1.204 | +0.70 at KL 1.204 |
+| Gaussian noise | 0.805 | none (monotone) | none (monotone) |
+| t₃ noise | 0.581 | +0.34 at KL 2.2 | +1.47 at KL 3.2 (n = 64) |
+| t₃ gold | 0.560 | none (monotone) | none (monotone) |
+
+1. Overoptimization appears only in the redescending case, under both optimizers, as the
+   monotone criterion says.
+2. The peak is again not at KL ≈ I₀: it sits 3–5× higher in every model that has one.
+
+**New: the tilt does not exist under heavy-tailed noise.** A t₃ proxy has E₀[e^{λR}] = ∞ for
+every λ > 0. So the KL-penalized objective sup_π E_π r − β·KL equals β·log E₀e^{r/β} = ∞, and it
+has no optimum. On the grid the tilt exists only because r is truncated, and its peak moves with
+the truncation point:
+
+| r_max | λ at peak | gold at peak | KL at peak |
+|---|---|---|---|
+| 10 | 0.93 | +0.77 | 2.47 |
+| 20 | 0.53 | +0.46 | 1.87 |
+| 30 | 0.39 | +0.35 | 1.79 |
+
+Best-of-n stays well defined. So with heavy-tailed noise, the "tilt" half of §1–§3 describes a
+truncated model, not the real one. This looks like the setting of Kwa et al. 2024, which is
+still unread.
+
 ## To check
 
-- Numerically verify §1 (both rate formulas) and §3 (path identity) on the toy and on a
-  Gaussian-gold / Student-t-noise model, including the redescending m. Code; needs Q's go.
-- Retrieve Dawid 1973 / O'Hagan 1979 and Kwa et al. 2024.
+- Retrieve Dawid 1973 / O'Hagan 1979 (redescending posterior mean), Karlin (log-concave ⇒ MLR ⇒
+  monotone posterior mean), and Kwa et al. 2024. Compare Kwa's claim with the tilt
+  non-existence above.

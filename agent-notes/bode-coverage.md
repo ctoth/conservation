@@ -127,6 +127,19 @@ Pacelli's GVP equality condition (checked); Q8 partial: g(end) − g(start) = �
 m(r_max) − E₀m for both optimizers (path-independent, Bode-shaped, integration by parts). Q12
 solved: Martins & Dahleh Def. 5.1 typeset p.1609, fixed f and c independent of x(0), d.
 
+Numeric check (Q "make it so", 2026-10-19): `research/regression_curve_check.py`. §1 rates and
+§3 path identity hold to ≤1.4e-9 on the toy and three grid models (N/N, N gold + t₃ noise, t₃
+gold + N noise). The key fact is checked independently: the toy's BoN closed form, and BoN Monte
+Carlo within 4 se. m redescends under t₃ noise (peak t = 3.1) and is monotone under Gaussian
+noise. Peaks occur only in the redescending model, at KL 3–5× I₀. New findings:
+- a t₃ proxy has no MGF, so the tilt / KL-penalized optimum does not exist, and the grid
+  tilt's peak moves with the truncation point;
+- best-of-n never reaches the budget term under light-tailed noise.
+
+Conjecture to check (from memory): log-concave noise ⇒ monotone m for any gold (Karlin).
+
+Results are in the report's "Numeric check" section.
+
 ## Surprises
 
 - Step 2 retrieval (2026-10-19): six background agents, notes only, each told not to touch
@@ -214,7 +227,7 @@ solved: Martins & Dahleh Def. 5.1 typeset p.1609, fixed f and c independent of x
 
 ## Next step
 
-Wait for the five pending retrieval agents; spot-check each paper's notes against its PDF;
-then run the shared-file steps (index, keymap, reconcile) once and commit `papers/`. Then
-the next retrieval batch: Kwa et al. 2024 (Catastrophic Goodhart), Coste et al. 2024, the
-rest of the report's priority list.
+Next retrieval batch: Kwa et al. 2024 (Catastrophic Goodhart; compare with the tilt
+non-existence under heavy-tailed noise), Dawid 1973, O'Hagan 1979, Karlin (log-concave ⇒
+monotone posterior mean), Coste et al. 2024, then the rest of the report's priority list.
+Open questions still untouched: 5, 6, 7, 9, 10, 11.
