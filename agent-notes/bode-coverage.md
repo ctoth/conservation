@@ -112,7 +112,18 @@ Seed tiers (unverified):
   five quoted conditions checked against the PDF text (all match). Kitano's ΔR = 0 needs the
   whole/broad perturbation space, equiprobable weighting, same system optimized for different
   subsets — same shape as Schaffer/NFL's uniform prior (my reading, for the synthesis).
-  Pending: Kitano 2010, Perdomo 2020, Narang 2022, Russo & Zou 2016, Pacelli & Theodorou 2026.
+  Perdomo 2020 done (`papers/Perdomo_2020_PerformativePrediction/`): checked p.4 "deploying the
+  same model at two different points in time must induce the same distribution", stability
+  "neither implied by nor does it imply" optimality, and Theorem 3.5 on the page image (p.8:
+  ε < γ/β ⇒ RRM converges linearly). D(θ) is a fixed memoryless map; ε is assumed, not derived.
+  Pacelli & Theodorou 2026 done (`papers/Pacelli_2026_FundamentalLimitsSensor-BasedControl/`):
+  checked Theorem 1 (eq. 4) and eqs. (2), (5)–(7) on the page image (PDF p.2). Sensor
+  y = h(x)+v with v iid, independent: the channel law is FIXED; only the state distribution
+  feeding it is policy-dependent. So it is not a moving channel. But Theorem 1 is the
+  Gibbs-variational form J* ≥ sup_β{inf_u F_β + J_u − Ī/β}: an MI budget Ī buys at most Ī/β of
+  cost reduction against the decoupled reference — a proven controller-side analogue of
+  "I nats of check buys bounded optimization" (my reading).
+  Pending: Kitano 2010, Narang 2022, Russo & Zou 2016.
   Shared-file steps (index.md, keymap, reconcile) were skipped by design; run them once all land.
 - The Kitano 2007 agent sent Q's email to the Unpaywall API in a manual curl. Cause:
   research-papers-plugin `skills/paper-retriever/SKILL.md` Option 2 step 2 says to query
