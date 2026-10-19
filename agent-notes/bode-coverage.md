@@ -144,7 +144,12 @@ Seed tiers (unverified):
 - All six in. Deleted the stray `papers.md`. Wrote `papers/index.md` and
   `papers/_reader_done.tsv`; rebuilt `papers/keymap.tsv` with the plugin's build_keymap.py.
   Reconcile --all launched after; the session ended before it wrote anything (tree clean at
-  8c8b262); resumed 2026-10-19.
+  8c8b262); resumed and finished 2026-10-19: 6 notes.md files, +172 lines. Checked: the only
+  in-collection citations are Kitano 2010 → 2007 and Narang → Perdomo (citations.md greps);
+  no em-dash or wikilink in added lines; Narang's ρ at n=1 (βγ/α) is Perdomo's εβ/γ under the
+  notation swap; Pacelli's GVP = Donsker–Varadhan with X = −βℓ (my algebra). Tension recorded:
+  Kitano 2007 Eq. 3 (re-tuned parameters only) vs 2010 Box 1 (structural change) — narrower
+  than it looks.
 - Direction (Q, 2026-10-19): the missing pieces across the batch are a channel the
   optimization acts on and non-Lipschitz verifiers; try first a Pacelli-style certificate
   with h depending on π. My reading (unchecked beyond Pacelli eqs. 2, 5–7, Thm 1): Thm 1's

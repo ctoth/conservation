@@ -193,5 +193,39 @@ Primary source for the "conservation of robustness" framing that this project is
 - Martins, Dahleh, Doyle (2007); Martins, Dahleh, Elia (2004).
 - Bode (1945); Fell (1992) MCA survey; Kitano 2004a.
 
+## Collection Cross-References
+
+### Already in Collection
+- (none; no reference in citations.md is in the collection)
+
+### New Leads (Not Yet in Collection)
+- Csete & Doyle (2002) - "Reverse engineering of biological complexity" - the source Kitano credits for the robustness-conservation claim and its Bode inspiration (p.2, p.4).
+- Yi, Sauro & Ingalls (2002) - "Limits of control and Bode's integral formula" - source of Box 2's normalized-sensitivity formulation and panel B (p.6).
+- Carlson & Doyle (1999) - "Highly optimized tolerance: a mechanism for power laws in designed systems" - HOT: a system optimized for a specific perturbation is fragile to unexpected ones (p.2-3).
+- Carlson & Doyle (2002) - "Complexity and robustness" - HOT, robust-yet-fragile (p.2-3).
+- Reynolds, Carlson & Doyle (2002) - "Design degree of freedom and mechanisms for complexity" - more design freedom, more fragility to unexpected perturbations (Box 1, p.3).
+- Martins, Dahleh & Doyle (2007) - "Fundamental limitations of disturbance attenuation in the presence of side information" - Bode-type trade-offs with a limited-capacity feedback channel (Box 2, p.6).
+- Martins, Dahleh & Elia (2004) - "Stabilization of uncertain systems in the presence of a stochastic digital link" - same limited-capacity channel line (Box 2, p.6).
+- Fell (1992) - "Metabolic control analysis: a survey of its theoretical and experimental development" - MCA summation/connectivity theorems cited as sensitivity conservation (p.4).
+- Bode (1945) - "Network Analysis and Feedback Amplifier Design" - the sensitivity integral (Eq. 4), cited here without its hypotheses (p.4, p.6).
+- Kitano (2004a) - "Biological robustness" - source of the working definition of robustness (p.1).
+
+### Supersedes or Recontextualizes
+- (none)
+
+### Cited By (in Collection)
+- [Violations of robustness trade-offs](../Kitano_2010_ViolationsRobustnessTrade-offs/notes.md) - cites this paper (with Csete & Doyle 2002 and Kitano 2004) as prior work claiming intrinsic robustness trade-offs, and argues the trade-off binds only on the efficient (Pareto) frontier: robustness "is conserved only when the system is on the efficient frontier" (2010, p.1, p.7). It recontextualizes this paper's Eq. 3 conjecture; it does not refute a theorem, since Eq. 3 is posed here without proof.
+
+### Conceptual Links (not citation-based)
+- [Fundamental Limits for Sensor-Based Control via the Gibbs Variational Principle](../Pacelli_2026_FundamentalLimitsSensor-BasedControl/notes.md) - Moderate. Box 2 here points to limited-capacity feedback channels (Martins et al. 2004, 2007) as "expanding the horizon of intrinsic trade-offs" beyond Bode (p.6). Pacelli & Theodorou give a limit of that information-constrained kind: a lower bound on achievable cost set by the sensor's mutual-information budget, for nonlinear nonholonomic systems where they say Bode integrals "do not apply" (Pacelli p.1, p.5). Pacelli derives no conservation integral, so it does not bear on whether Eq. 3 holds.
+
+### Tensions with Collection Papers
+- With [Violations of robustness trade-offs](../Kitano_2010_ViolationsRobustnessTrade-offs/notes.md): Eq. 3 here says that over the whole perturbation space with equiprobable weighting, two tunings of the same system have equal total robustness (p.4). Kitano 2010 says a system off the efficient frontier can gain robustness without losing anything (2010 p.1, Box 1 p.2). The conflict is narrower than it looks. Eq. 3's offset reading assumes "S1 and S2 are the same system but with parameters optimized for different subset of perturbations" (p.4); this paper already exempts changes that add resources or reduce performance (p.2-3) and leaves "major structural changes" to future work (p.4-5). Kitano 2010's Box 1 move (two series resistors to two parallel resistors in the feedback loop) is a change of configuration, not a re-tuning of parameters, so it falls outside the conditions stated here. Both papers use the same feedback-amplifier resistor circuit: this paper's Fig. 4C presents one resistor R vs two 2R in parallel as a robustness-resource trade-off (p.5); Kitano 2010 adds a series design B that the parallel design dominates at equal resistor count (2010 p.2).
+- On this paper's open question about "≥ 0" (Eq. 4) versus "A = B" (Box 2 panel A): Kitano 2010's supplement draws the Bode case as a line on which S+ and S- are "generally equal", with designs carrying more component-failure risk strictly on the worse side (2010 S2, Fig. S1). Reading that as equality at the optimized design and inequality otherwise is the 2010 note-taker's inference, not a statement in either paper.
+
 ---
 Provenance: read from page images pngs/page-000..006 (7/7 pages) of paper.pdf downloaded from https://www.embopress.org/doi/pdf/10.1038/msb4100179, 2026-10-19.
+
+---
+
+**See also:** [Violations of robustness trade-offs](../Kitano_2010_ViolationsRobustnessTrade-offs/notes.md) - Kitano's 2010 Perspective argues the robustness trade-off, and with it conservation, binds only on the efficient (Pareto) frontier, recasting this paper's Eq. 3 conjecture as a property of sufficiently optimized systems and limiting Bode's integral to frequency-axis sensitivity of negative feedback (2010 p.1, p.7).

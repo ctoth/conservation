@@ -249,7 +249,38 @@ No effect sizes; no new data. The only numeric result is the illustrative covari
 - Bode H (1945) Network Analysis and Feedback Amplifier Design — the integral itself.
 - Csete ME, Doyle JC (2002) Reverse engineering of biological complexity. Science 295:1664-1669 — "robust yet fragile".
 - Carlson JM, Doyle J (1999) Highly optimized tolerance. Phys Rev E 60:1412-1427; Reynolds, Carlson, Doyle (2002) Design degrees of freedom. Phys Rev E 66:016108.
-- Kitano H (2004) Biological robustness. Nat Rev Genet 5:826-837; Kitano H (2007) Towards a theory of biological robustness. Mol Syst Biol 3:137 (already in collection: papers/Kitano_2007_TheoryBiologicalRobustness).
+- Kitano H (2004) Biological robustness. Nat Rev Genet 5:826-837; Kitano H (2007) Towards a theory of biological robustness. Mol Syst Biol 3:137 (already in collection: papers/Kitano_2007_TheoryBiologicalRobustness). → NOW IN COLLECTION: [Towards a theory of biological robustness](../Kitano_2007_TheoryBiologicalRobustness/notes.md)
 - Ibarra RU, Edwards JS, Palsson BO (2002) E. coli K-12 adaptive evolution to in silico predicted optimal growth. Nature 420:186-189.
 - Fischer E, Sauer U (2005) Rigidity and suboptimal performance of B. subtilis metabolism. Nat Genet 37:636-640.
 - Markowitz H (1991) Portfolio Selection.
+
+## Collection Cross-References
+
+### Already in Collection
+- [Towards a theory of biological robustness](../Kitano_2007_TheoryBiologicalRobustness/notes.md) - cited (p.1) among the prior work claiming intrinsic trade-offs among robustness, fragility, performance and resource demand, supported by the Bode integral and the MCA summation theorem; this paper conditions those trade-offs on optimality.
+
+### Now in Collection (previously listed as leads)
+- [Towards a theory of biological robustness](../Kitano_2007_TheoryBiologicalRobustness/notes.md) - Kitano's 2007 editorial defines robustness as a probability-weighted integral of relative function preservation over a perturbation space (2007 Eq. 1-2) and poses, without proof, that two tunings of the same system have equal total robustness over the whole perturbation space with equiprobable weighting (2007 Eq. 3), by analogy with Bode, the MCA summation theorems, HOT and the gain-bandwidth product. It leaves open whether conservation exists "in either relative or strict manner" (2007 p.5). This paper's frontier-only claim is Kitano's later answer to that question; see Tensions below.
+
+### New Leads (Not Yet in Collection)
+- Bode (1945) - "Network Analysis and Feedback Amplifier Design" - the integral this paper limits to "conservation of the sensitivities of negative feedback circuits on a frequency axis" (p.1).
+- Csete & Doyle (2002) - "Reverse engineering of biological complexity" - source of the "robust yet fragile" trade-off claim this paper conditions on optimality (p.1).
+- Carlson & Doyle (1999) - "Highly optimized tolerance: a mechanism for power laws in designed systems" - HOT, linked to portfolio diversity in the Fig. 1 caption (p.3).
+- Reynolds, Carlson & Doyle (2002) - "Design degrees of freedom and mechanisms for complexity" - same HOT link (p.3).
+- Ibarra, Edwards & Palsson (2002) - "Escherichia coli K-12 undergoes adaptive evolution to achieve in silico predicted optimal growth" - experimental-evolution data read as convergence to the frontier (p.6).
+- Fischer & Sauer (2005) - "Large-scale in vivo flux analysis shows rigidity and suboptimal performance of Bacillus subtilis metabolism" - "suboptimal" metabolism reread as optimal under a risk-averse indifference curve (p.5-6).
+- Markowitz (1991) - "Portfolio Selection: Efficient Diversification of Investments" - the efficient-frontier framework the paper translates into biology (p.2-3).
+- Fell (1997) - "Understanding the Control of Metabolism" - the summation theorem, which "assumes linearization for minor perturbations" (p.1).
+- Kitano (2004) - "Biological robustness" - prior statement of the trade-offs (p.1).
+
+### Supersedes or Recontextualizes
+- [Towards a theory of biological robustness](../Kitano_2007_TheoryBiologicalRobustness/notes.md) - recontextualizes the 2007 conservation conjecture (2007 Eq. 3): robustness "is conserved only when the system is on the efficient frontier" (p.7), and off the frontier "the system can be made more robust without undermining other features" (p.1). It also narrows the Bode integral to frequency-axis sensitivity of negative feedback (p.1, S3), where the 2007 paper cites it as the inspiration for a general biological conservation principle (2007 p.4).
+
+### Cited By (in Collection)
+- (none found)
+
+### Conceptual Links (not citation-based)
+- [Fundamental Limits for Sensor-Based Control via the Gibbs Variational Principle](../Pacelli_2026_FundamentalLimitsSensor-BasedControl/notes.md) - Strong. Both describe successful feedback reducing what an observation reveals about what lies underneath. In this paper's supplement, feedback compensation relaxes selection on loop components, which can then evolve to be "sloppy": a 40% non-linearity component still gives 4% closed-loop non-linearity, inside the 5% spec that a 4% component (0.4% closed-loop) also passes, so the spec no longer separates the two (S1-S3). In Pacelli & Theodorou, a good controller concentrates the state, which caps the mutual information a fixed sensor can carry about it (Pacelli eq. 13, p.3), so the information budget shrinks as control improves (J* ≥ J_irr(Ī(J*)), Pacelli p.4). The settings differ: this paper's argument is qualitative and evolutionary with no information measure; Pacelli's is a formal lower bound with a fixed sensor and no selection. Both also limit Bode's reach: this paper confines it to the frequency axis of negative feedback (p.1, S3), and Pacelli says Bode integrals "do not apply" to its nonlinear Dubins tracking problem (Pacelli p.5).
+
+### Tensions with Collection Papers
+- With [Towards a theory of biological robustness](../Kitano_2007_TheoryBiologicalRobustness/notes.md): the 2007 Eq. 3 says two tunings of the same system have equal total robustness over the whole perturbation space (2007 p.4); this paper says a system off the frontier can gain robustness for free (p.1, Box 1 p.2). The 2007 conditions already narrow the conflict: Eq. 3 is about "the same system but with parameters optimized for different subset of perturbations" (2007 p.4), it exempts added resources and reduced performance (2007 p.2-3), and it defers "major structural changes" (2007 p.4-5). Box 1 here changes the feedback-loop configuration (series to parallel), so it is outside those stated conditions. The same resistor circuit appears in 2007 Fig. 4C as a robustness-resource trade-off (one R vs two 2R in parallel, 2007 p.5); this paper adds the series design B, which the parallel design dominates at equal resistor count (p.2).

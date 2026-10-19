@@ -409,3 +409,33 @@ Context: Bode-type limits where the channel is endogenous to the policy (Goodhar
 - [14] Chen, Georgiou & Tannenbaum, "Stochastic control and nonequilibrium thermodynamics: Fundamental limits," TAC 2020.
 - [20] Sagawa & Ueda, "Generalized Jarzynski equality under nonequilibrium feedback control," PRL 2010.
 - [10] Theodorou & Todorov, "Relative entropy and free energy dualities," CDC 2012.
+
+## Collection Cross-References
+
+### Already in Collection
+- (none; no reference in citations.md is in the collection)
+
+### New Leads (Not Yet in Collection)
+- Majumdar & Pacelli (2022) - "Fundamental performance limits for sensor-based robot control and policy learning" - the TRIP bound; evaluates sensor MI under the open-loop state distribution, and is the β → ∞, indicator-cost special case of this paper's bound (Remark 1, p.3).
+- Majumdar, Mei & Pacelli (2023) - "Fundamental limits for sensor-based robot control" - journal version of TRIP.
+- Gerchinovitz, Ménard & Stoltz (2020) - "Fano's inequality for random variables" - the generalized Fano inequality underlying TRIP.
+- Bode (1945) - "Network Analysis and Feedback Amplifier Design" - classical problem-class-specific limit the paper positions against (p.1).
+- Nair, Fagnani, Zampieri & Evans (2007) - "Feedback control under data rate constraints: An overview" - data-rate theorems, the other classical limit named (p.1).
+- Chen, Georgiou & Tannenbaum (2020) - "Stochastic control and nonequilibrium thermodynamics: Fundamental limits" - thermodynamic limits of stochastic control.
+- Sagawa & Ueda (2010) - "Generalized Jarzynski equality under nonequilibrium feedback control" - structural parallel flagged as future work (p.6).
+
+### Supersedes or Recontextualizes
+- (none)
+
+### Cited By (in Collection)
+- (none found)
+
+### Conceptual Links (not citation-based)
+
+**Feedback reducing the information an observation carries:**
+- [Violations of robustness trade-offs](../Kitano_2010_ViolationsRobustnessTrade-offs/notes.md) - Strong. Kitano's supplement has feedback compensation relax selection on loop components so they can evolve to be "sloppy": a 40% non-linearity component gives 4% closed-loop non-linearity, inside a 5% spec that a 4% component (0.4% closed-loop) also passes, so the spec no longer separates them (Kitano 2010 S1-S3). Here a good controller concentrates the state, which caps the MI the fixed sensor can carry (eq. 13, p.3). Both are cases of successful feedback lowering what an observable reveals; Kitano's is qualitative and evolutionary with no information measure, this paper's is a formal bound with a fixed sensor and no selection. Both also limit Bode: Kitano confines it to the frequency axis of negative feedback (Kitano 2010 p.1, S3); this paper says Bode integrals "do not apply" to the Dubins problem (p.5).
+- [Towards a theory of biological robustness](../Kitano_2007_TheoryBiologicalRobustness/notes.md) - Moderate. Kitano's Box 2 points to limited-capacity feedback channels (Martins et al. 2004, 2007) as extending intrinsic trade-offs beyond Bode (Kitano 2007 p.6); this paper's bound is a limit of that information-constrained kind. It derives no conservation integral, so it does not test Kitano's conjectured robustness conservation (Kitano 2007 Eq. 3).
+
+**Policy-dependent distributions and variational bounds:**
+- [Performative Prediction](../Perdomo_2020_PerformativePrediction/notes.md) - Strong. Both make the distribution that a fixed evaluation sees depend on the policy and then solve a self-consistency condition. Perdomo et al. assume θ -> D(θ) is ε-Lipschitz in W1 and study the retraining fixed point θ_PS = argmin_θ E_{D(θ_PS)} ℓ (Perdomo Def 2.3); here the sensor is fixed but its MI is taken under the closed-loop state law and bounded from the cost (eq. 12-13), closed into J_sc = Φ(J_sc) (Thm 2). Perdomo's shift is assumed and its fixed point is a learning equilibrium; this paper derives the information supply from the cost and its fixed point is a bound. Neither models a proxy diverging from true quality: Perdomo trains and evaluates with the same loss, and the channel here is not corrupted by pressure on it.
+- [How much does your data exploration overfit? Controlling bias via information usage](../Russo_2015_MuchDoesDataExploration/notes.md) - Strong. Same variational inequality and same kind of decoupled reference law. This paper's GVP, F_β[ℓ] − (1/β)KL(P‖Q) ≤ E_P[ℓ] (p.2), is Russo & Zou's Fact 1, KL(P‖Q) = sup_X {E_P X − log E_Q e^X} (Russo p.12), with X = −βℓ. Both choose a reference in which the decision is independent of the noisy signal (here observations drawn independently of state, eq. 5; in Russo the unconditional law of φ_i against its law given T = i, Russo p.12-13), so that the KL becomes a mutual information (here inf_ν KL = Σ_t I_π[x_t; y_t], eq. 7; in Russo I(T; φ) = Σ_i P(T = i) KL, Russo p.12). Both then optimize the free parameter (β in eq. 4; λ = Δ_i/σ² in Russo p.13). The direction differs: Russo upper-bounds how far I nats can push a selected statistic's mean (σ·sqrt(2I) for sub-Gaussian noise); this paper lower-bounds the cost a controller cannot get below with Ī nats (J_irr(Ī), eq. 4).

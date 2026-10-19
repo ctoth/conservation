@@ -561,3 +561,28 @@ What the paper actually establishes, mapped carefully:
 - Polyanskiy & Wu 2016 [26]; Anantharam et al. [24]; Kamath & Nair [25] — strong data processing.
 - McAllester PAC-Bayes tutorial [15].
 - Cesa-Bianchi & Lugosi [31] — exponential weights.
+
+## Collection Cross-References
+
+### Already in Collection
+- (none; no reference in citations.md is in the collection)
+
+### New Leads (Not Yet in Collection)
+- Gray (2011) - "Entropy and Information Theory" - Thm 5.2.1, the variational KL formula the main proof rests on (p.12).
+- Wainwright (2015) - "Basic tail and concentration bounds" - sub-Gaussian and sub-exponential facts used in Prop 2 and Prop 9 (p.14).
+- Dwork, Feldman, Hardt, Pitassi, Reingold & Roth (2015) - "Generalization in adaptive data analysis and holdout reuse" - max-information approach, the worst-case counterpart (pp.21-22).
+- Dwork, Feldman, Hardt, Pitassi, Reingold & Roth (2015) - "The reusable holdout: Preserving validity in adaptive data analysis" - same line.
+- Dwork, Feldman, Hardt, Pitassi, Reingold & Roth (2015) - "Preserving statistical validity in adaptive data analysis" (STOC) - differential-privacy approach to adaptive analysis.
+- Polyanskiy & Wu (2016) - "Dissipation of information in channels with input constraints" - strong data processing, used in Prop 4 (p.6).
+- McAllester (2013) - "A PAC-Bayesian tutorial with a dropout bound" - KL-based generalization bounds with related change-of-measure machinery.
+
+### Supersedes or Recontextualizes
+- (none)
+
+### Cited By (in Collection)
+- (none found)
+
+### Conceptual Links (not citation-based)
+- [Fundamental Limits for Sensor-Based Control via the Gibbs Variational Principle](../Pacelli_2026_FundamentalLimitsSensor-BasedControl/notes.md) - Strong. Same variational inequality and same kind of decoupled reference law. Pacelli & Theodorou's Gibbs variational principle, F_β[ℓ] − (1/β)KL(P‖Q) ≤ E_P[ℓ] (Pacelli p.2), is this paper's Fact 1 (p.12) with X = −βℓ. Both choose a reference in which the decision is independent of the noisy signal (here the unconditional law of φ_i against its law given T = i, pp.12-13; in Pacelli observations drawn independently of state, Pacelli eq. 5), so the KL becomes a mutual information (I(T; φ) here; Σ_t I_π[x_t; y_t] in Pacelli eq. 7), and both optimize the free parameter (λ = Δ_i/σ² here; β in Pacelli eq. 4). The direction differs: this paper upper-bounds the overestimation I nats can buy; Pacelli lower-bounds the cost a controller cannot get below with Ī nats. Pacelli's MI is taken under the closed-loop law, so the information budget itself depends on the policy, which has no counterpart here.
+- [Performative Prediction](../Perdomo_2020_PerformativePrediction/notes.md) - Strong. Two change-of-measure routes to the same question: how far can a shift in distribution move an evaluation statistic. Perdomo et al. bound the shift of any L-Lipschitz statistic by L·ε||θ − θ'|| from W1-sensitivity (Perdomo Lemmas C.3-C.4); this paper bounds the mean shift of a σ-sub-Gaussian statistic by σ·sqrt(2·KL) (p.13). Because bounded variables are sub-Gaussian (p.3), the KL route covers 0-1 statistics such as training error (Prop 5), which W1-sensitivity cannot bound (Perdomo's notes raise this as an open question). The budgets are in different units (W1 per unit parameter change vs nats), and neither paper relates them.
+- [Multiplayer Performative Prediction: Learning in Decision-Dependent Games](../Narang_2022_MultiplayerPerformativePredictionLearning/notes.md) - Moderate. Two aggregation rules for a budget spread over several steps or actors: here information usage adds over adaptive steps, I(T_{k+1}; φ) ≤ Σ_i I(Y_{T_i}; φ_{T_i} | H_{i−1}, T_i) (Lemma 1, p.11); in Narang et al. per-player W1 sensitivities add in quadrature, ρ² = Σ_i (β_i γ_i/α)² (Narang p.8). This paper's per-statistic step KL ≥ Δ²/(2σ²) (p.13) is the KL counterpart of Narang's W1 gradient-deviation lemma (Narang Lemma 1), which Narang's open question about a KL analogue of its Assumption 2 would need; neither paper connects them.

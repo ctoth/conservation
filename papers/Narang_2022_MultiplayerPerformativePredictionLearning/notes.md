@@ -431,9 +431,33 @@ What the paper does and does not say, against the question of whether an optimiz
 - [ ] Figure 1 text (d=5, m=100) vs caption (m_i=10/100, d_i=2) mismatch *(p.28)*.
 
 ## Related Work Worth Reading
-- Perdomo, Zrnic, Mendler-Dünner, Hardt 2020, Performative prediction (ICML): single-player origin.
+- Perdomo, Zrnic, Mendler-Dünner, Hardt 2020, Performative prediction (ICML): single-player origin. → NOW IN COLLECTION: [Performative Prediction](../Perdomo_2020_PerformativePrediction/notes.md)
 - Miller, Perdomo, Zrnic 2021, Outside the echo chamber: convexity conditions this paper generalizes.
 - Drusvyatskiy & Xiao 2020, Stochastic optimization with decision-dependent distributions: the biased-SGD view.
 - Rosen 1965, Existence and uniqueness of equilibrium points for concave n-person games.
 - Drusvyatskiy, Fazel, Ratliff 2021, Improved rates for derivative free gradient play in monotone games.
 - Mendler-Dünner et al. 2020, Stochastic optimization for performative prediction (NeurIPS).
+
+## Collection Cross-References
+
+### Already in Collection
+- [Performative Prediction](../Perdomo_2020_PerformativePrediction/notes.md) - cited as the single-player origin of performative prediction and of the performative stability vs optimality distinction (p.2); this paper's rates "reduce to state-of-the art guarantees in the single player setting" (p.2).
+
+### Now in Collection (previously listed as leads)
+- [Performative Prediction](../Perdomo_2020_PerformativePrediction/notes.md) - Perdomo et al. define the distribution map θ -> D(θ), ε-sensitivity W1(D(θ), D(θ')) ≤ ε||θ − θ'||, and performative stability vs optimality. Repeated risk minimization is an εβ/γ-contraction that converges linearly to a unique stable point when ε < γ/β, tight in the worst case (Perdomo Thm 3.5, Prop 3.6), and stable points lie within 2L_z ε/γ of performative optima (Perdomo Thm 4.3). At n = 1 this paper's ρ = βγ/α is the same quantity in other letters (this paper's γ_i is Perdomo's ε, its α is Perdomo's γ, its β_i is Perdomo's β in z), so Theorem 1's ρ < 1 matches Perdomo's ε < γ/β. No conflict found.
+
+### New Leads (Not Yet in Collection)
+- Miller, Perdomo & Zrnic (2021) - "Outside the echo chamber: Optimizing the performative risk" - convexity conditions; Theorem 5 reduces to their Theorem 3.1 at n = 1 (p.15).
+- Drusvyatskiy & Xiao (2020) - "Stochastic optimization with decision-dependent distributions" - decision-dependent SGD as static SGD with bias, the analysis template used throughout (p.4, p.13).
+- Rosen (1965) - "Existence and uniqueness of equilibrium points for concave n-person games" - strong monotonicity gives a unique Nash equilibrium (p.5).
+- Drusvyatskiy, Fazel & Ratliff (2021) - "Improved rates for derivative free gradient play in monotone games" - source of the Proposition 1 rates (p.19).
+- Mendler-Dünner, Perdomo, Zrnic & Hardt (2020) - "Stochastic optimization for performative prediction" - stochastic methods for the single-player case.
+
+### Supersedes or Recontextualizes
+- [Performative Prediction](../Perdomo_2020_PerformativePrediction/notes.md) - extends single-player performative prediction to n players whose distributions D_i(x) depend on the joint action; the existence and convergence condition becomes the aggregate ρ = sqrt(Σ_i (β_i γ_i/α)²) < 1 (Thm 1, p.10), which reduces to Perdomo's ε < γ/β at n = 1.
+
+### Cited By (in Collection)
+- (none found). Perdomo's notes list this paper under Related Work as already in collection, but Perdomo et al. (2020) predates it and does not cite it.
+
+### Conceptual Links (not citation-based)
+- [How much does your data exploration overfit? Controlling bias via information usage](../Russo_2015_MuchDoesDataExploration/notes.md) - Moderate. Two different rules for how a budget aggregates across several optimizing steps or actors. Here the stability condition sums squared per-distribution sensitivities across players in quadrature (ρ² = Σ_i (β_i γ_i/α)², p.8), so with n identical players each player's allowed ratio shrinks like 1/sqrt(n). In Russo & Zou's multi-step analyst, information usage accumulates additively over adaptive steps, I(T_{k+1}; φ) ≤ Σ_i I(Y_{T_i}; φ_{T_i} | H_{i−1}, T_i) (Russo Lemma 1, p.11), and bias is bounded by σ·sqrt(2I). Russo's per-statistic step KL ≥ Δ²/(2σ²) for a σ-sub-Gaussian statistic (Russo p.13) plays the role for KL that this paper's Lemma 1 (gradient deviation ≤ β·W1) plays for Wasserstein-1, which is the ingredient this paper's open question about a KL analogue of Assumption 2 would need; neither paper makes that connection.

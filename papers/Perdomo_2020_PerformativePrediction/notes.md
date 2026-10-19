@@ -376,3 +376,29 @@ For Goodhart-as-optimization-changing-the-channel: this is the canonical formali
 - Bechavod et al. 2020, Causal Feature Discovery through Strategic Modification [4].
 - Shavit, Edelman, Axelrod 2020, Learning From Strategic Agents [37].
 - Already in collection: Narang et al. 2022, Multiplayer Performative Prediction (papers/Narang_2022_MultiplayerPerformativePredictionLearning).
+
+## Collection Cross-References
+
+### Already in Collection
+- (none; no reference in citations.md is in the collection)
+
+### New Leads (Not Yet in Collection)
+- Hardt, Megiddo, Papadimitriou & Wootters (2016) - "Strategic Classification" - the Stackelberg formulation this paper subsumes; agents gaming a classifier is the direct Goodhart case.
+- Miller, Milli & Hardt (2019) - "Strategic Classification is Causal Modeling in Disguise" - separates gaming from improvement causally, the proxy-vs-true-quality split this paper does not model.
+- Kleinberg & Raghavan (2019) - "How Do Classifiers Induce Agents to Invest Effort Strategically?" - which classifiers induce effort on the true target vs on the proxy.
+- Fournier & Guillin (2015) - "On the Rate of Convergence in Wasserstein Distance of the Empirical Measure" - W1 concentration used for the finite-sample Theorem 3.10.
+- Shavit, Edelman & Axelrod (2020) - "Learning From Strategic Agents: Accuracy, Improvement, and Causality" - accuracy vs improvement vs causality under strategic agents.
+
+### Supersedes or Recontextualizes
+- (none)
+
+### Cited By (in Collection)
+- [Multiplayer Performative Prediction: Learning in Decision-Dependent Games](../Narang_2022_MultiplayerPerformativePredictionLearning/notes.md) - cites this paper as the single-player origin and generalizes ε-sensitivity and the retraining contraction to n players with aggregate ρ = sqrt(Σ_i (β_i γ_i/α)²); at n = 1, ρ equals this paper's εβ/γ and Narang's ρ < 1 matches ε < γ/β (Narang Thm 1, p.10). Narang's description of this paper is accurate.
+
+### Conceptual Links (not citation-based)
+- [Fundamental Limits for Sensor-Based Control via the Gibbs Variational Principle](../Pacelli_2026_FundamentalLimitsSensor-BasedControl/notes.md) - Strong. Both make the distribution a fixed evaluation sees depend on the policy, then solve a self-consistency condition. Here θ -> D(θ) with the shift assumed ε-Lipschitz in W1, and a performatively stable point is a fixed point of retraining, θ_PS = argmin_θ E_{D(θ_PS)} ℓ (Def 2.3). In Pacelli & Theodorou the sensor (h, Σ_v) is fixed but the mutual information it carries is taken under the closed-loop state law and bounded through the cost (coercivity to second moments to Gaussian max-entropy, Pacelli eq. 12-13), closed into the fixed point J_sc = Φ(J_sc) (Pacelli Thm 2). The differences: here ε is an assumption; Pacelli derives the information supply from the cost. Here the fixed point is an equilibrium of a learning dynamic; Pacelli's is the largest cost consistent with the certificate, i.e. a bound. Neither models a proxy diverging from true quality: this paper trains and evaluates with the same ℓ (item 7 above), and Pacelli's channel is not corrupted by pressure on it (Pacelli, Relevance to Project).
+- [How much does your data exploration overfit? Controlling bias via information usage](../Russo_2015_MuchDoesDataExploration/notes.md) - Strong. Two change-of-measure routes to the same question: how far can a shift in distribution move an evaluation statistic. Here W1(D(θ), D(θ')) ≤ ε||θ − θ'|| bounds the shift of any L-Lipschitz statistic by L·ε||θ − θ'|| (Lemmas C.3-C.4). Russo & Zou bound the mean shift of a σ-sub-Gaussian statistic between its selected and unconditional laws by σ·sqrt(2·KL) (Russo p.13), and since bounded variables are sub-Gaussian (Russo p.3) this covers 0-1 statistics such as training error (Russo Prop 5), which are the non-Lipschitz verifiers that ε-sensitivity cannot bound (the "(Ours)" open question above). The budgets are in different units (W1 per unit parameter change vs nats), and neither paper relates them. Russo also shows the square-root law becomes linear in I under sub-exponential tails (Russo Prop 9, Thm 2).
+
+---
+
+**See also:** [Multiplayer Performative Prediction: Learning in Decision-Dependent Games](../Narang_2022_MultiplayerPerformativePredictionLearning/notes.md) - extends this paper to n players whose distributions depend on the joint action; the convergence condition becomes ρ = sqrt(Σ_i (β_i γ_i/α)²) < 1, which reduces to ε < γ/β at n = 1 (Narang Thm 1, p.10).
