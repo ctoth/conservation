@@ -118,6 +118,15 @@ laws unanswerable. 10. Information analogue of Narang's shared budget. 11. Chann
 no quantity; Seligman 2009 strength problem unchecked. 12. Martins–Dahleh fixed-channel reading
 vs typeset equations. 13. KL-penalized RL optimum = tilt (from memory, unchecked).
 
+Progress (2026-10-19, `reports/regression-curve-peak.md`, derived by hand, unchecked): for tilt
+and BoN, E_π[g | r] = m(r) := E₀[g | r]; gold rate = non-negative-kernel average of m′ (tilt:
+Hoeffding kernel K_λ; BoN: uⁿ(1−u)). ⇒ Q4 peak set by init joint via m, F₀ (no scalar can do
+it); Q2 slope of m, not MI; monotone m ⇒ no overoptimization; Q3 heavy-tailed noise ⇒
+redescending m (Dawid 1973 / O'Hagan 1979, from memory) ⇒ gains fully returned; Q13 solved via
+Pacelli's GVP equality condition (checked); Q8 partial: g(end) − g(start) = ∫ m′F₀ dt =
+m(r_max) − E₀m for both optimizers (path-independent, Bode-shaped, integration by parts). Q12
+solved: Martins & Dahleh Def. 5.1 typeset p.1609, fixed f and c independent of x(0), d.
+
 ## Surprises
 
 - Step 2 retrieval (2026-10-19): six background agents, notes only, each told not to touch
