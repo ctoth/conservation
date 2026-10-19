@@ -143,7 +143,18 @@ Seed tiers (unverified):
   allowance shrinks like 1/√n (Wasserstein terms, not information).
 - All six in. Deleted the stray `papers.md`. Wrote `papers/index.md` and
   `papers/_reader_done.tsv`; rebuilt `papers/keymap.tsv` with the plugin's build_keymap.py.
-  Reconcile --all launched after.
+  Reconcile --all launched after; the session ended before it wrote anything (tree clean at
+  8c8b262); resumed 2026-10-19.
+- Direction (Q, 2026-10-19): the missing pieces across the batch are a channel the
+  optimization acts on and non-Lipschitz verifiers; try first a Pacelli-style certificate
+  with h depending on π. My reading (unchecked beyond Pacelli eqs. 2, 5–7, Thm 1): Thm 1's
+  proof is per-policy, so it survives y = h_π(x)+v with Ī ≥ Σ I_π[x;y] uniformly over π; the
+  certificate Ī(J) (eqs. 13–16, fixed h) does not and needs a model of how far cost-≤J policies
+  can move h_π. Role map: y = verifier score, x = true quality; Goodhart policies shrink I_π
+  and raise the true-cost floor (Pacelli's fixed point, reinterpreted). Non-Lipschitz is a W1
+  problem (Perdomo, Narang), not an MI one: binary verifier ⇒ I_π ≤ H(V) ≤ log 2. Likely break:
+  eq. (2) needs sensor noise iid and independent of process noise; h_π can make it
+  state-dependent. Formal write-up or toy model waits on Q.
   Shared-file steps (index.md, keymap, reconcile) were skipped by design; run them once all land.
 - The Kitano 2007 agent sent Q's email to the Unpaywall API in a manual curl. Cause:
   research-papers-plugin `skills/paper-retriever/SKILL.md` Option 2 step 2 says to query
