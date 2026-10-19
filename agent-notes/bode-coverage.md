@@ -75,6 +75,25 @@ Seed tiers (unverified):
   sweep: performative prediction (Perdomo et al. 2020), strategic classification (Hardt et al.
   2016).
 
+- Conjecture (Q, 2026-10-19): true value per nat of KL decays once selection pressure (nats)
+  exceeds I(verifier score; true quality); light tails → diminishing returns, heavy tails →
+  catastrophic Goodhart. Candidate "Bode integral for performative channels": a check with
+  I nats about quality safely carries ~I nats of optimization. Test: Gao setup, peak near
+  KL ≈ I?
+  - Checked (Gao et al. arXiv 2210.10760 §1): d := √KL; R_bon = d(α − βd), R_RL =
+    d(α − β log d). Peaks (my algebra): BoN KL* = α²/4β²; RL d* = e^(α/β − 1). Gold RM =
+    OpenAI-internal 6B InstructGPT RM (§2.1), so not reproducible as-is.
+  - My derivation, unchecked: jointly Gaussian proxy/gold → BoN gold gain ≈ ρ√(2KL), no peak,
+    noise share constant (1−ρ); small ρ: gain ≈ 2√(I·KL). So the KL ≈ I turnover must come
+    from non-Gaussian error (Gao's β term). Published-coefficient filter: ρ ≈ α/√2,
+    I ≥ −½log(1−α²/2) ≈ α²/4 ⇒ conjecture predicts β_bon ≈ 1 across RM sizes.
+  - Theory hook (from memory, unchecked): Donsker–Varadhan/transportation: σ-subgaussian gold ⇒
+    gain ≤ σ√(2KL); Russo & Zou 2016 is the MI version.
+  - Real test (needs "make it so"): open replication; measure I(proxy;gold) by a rank-based
+    estimator under π_init (predicts peak) and under π_d (endogenous-channel decay).
+  - Retrieval additions (unverified): Kwa et al. 2024 "Catastrophic Goodhart"; Coste et al.
+    2024 (open Gao replication); Bobkov & Götze 1999.
+
 ## Surprises
 
 - An untracked `conservation-dynamics/tests/compiled_conformance.proptest-regressions` held a
