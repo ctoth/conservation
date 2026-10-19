@@ -168,6 +168,16 @@ Seed tiers (unverified):
   Thm 1, not Thm 2 (fails Def 1(a)). Gaps: no link from proxy optimization to falling I(π);
   deterministic continuous verifier ⇒ I = ∞; state-dependent noise breaks (13). Side result
   via Russo Prop 1: BoN gold gain ≤ σ√(2·min(log n, n·I(p;g))).
+- Toy model (Q "make it so", 2026-10-19): `research/goodhart_toy.py`, `reports/goodhart-toy.md`.
+  Good/bad/exploit kinds, binary verifier, tilted optimizer π ∝ p₀e^{λs}. Findings: peak at
+  KL ≈ log(1/p_good) = 1.204, ~5× I₀ = 0.229; exact identity d/dλ E[gold] = Cov_π(gold, s) =
+  Cov_π(gold, verdict) ⇒ gold peaks where the verdict is uncorrelated with gold under π (binary:
+  I_π = 0); sign change asserted for all ε. False-pass rate 0.2 → 0.9 at the peak, before gold
+  falls (collapse at KL ≈ 0.69·log(1/ε)). Unsigned I_π is 0 at both best and worst policy and
+  rises in between; the signed covariance is the indicator. First version swept λ ≤ 40 and
+  missed the collapse; fixed by λ_max = 2·ln(good/ε)/(1−a) + 20.
+  Prediction for a Gao-style replication (tilt only, not BoN): gold peak where Cov_π(gold,
+  proxy) crosses zero along the KL-regularized optimum.
   Shared-file steps (index.md, keymap, reconcile) were skipped by design; run them once all land.
 - The Kitano 2007 agent sent Q's email to the Unpaywall API in a manual curl. Cause:
   research-papers-plugin `skills/paper-retriever/SKILL.md` Option 2 step 2 says to query
