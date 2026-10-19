@@ -105,6 +105,19 @@ Seed tiers (unverified):
   - Retrieval additions (unverified): Kwa et al. 2024 "Catastrophic Goodhart"; Coste et al.
     2024 (open Gao replication); Bobkov & Götze 1999.
 
+## Open questions (as of 2026-10-19, after the toy)
+
+1. Peak condition for non-tilt optimizers (BoN, unconverged RL). 2. Non-binary scores: zero
+covariance ≠ zero MI. 3. Heavy tails (toy gold bounded; Kwa et al. unread). 4. Predicting the
+Cov zero crossing from init quantities. 5. Deterministic verifiers ⇒ I = ∞ (charge info to the
+cost-relevant statistic). 6. State-dependent noise breaks Pacelli (13). 7. History-dependent
+budget/certificate unchecked. 8. No conservation equality yet; only ∫ Cov_π(gold, proxy) dλ =
+gold(∞) − gold(0) (trivially true, Bode-shaped); nontrivial version (KL coords, log weight)?
+Highest priority. 9. Task-space, disturbance, test-suite coverage unread → one budget vs four
+laws unanswerable. 10. Information analogue of Narang's shared budget. 11. Channel theory has
+no quantity; Seligman 2009 strength problem unchecked. 12. Martins–Dahleh fixed-channel reading
+vs typeset equations. 13. KL-penalized RL optimum = tilt (from memory, unchecked).
+
 ## Surprises
 
 - Step 2 retrieval (2026-10-19): six background agents, notes only, each told not to touch
