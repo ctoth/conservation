@@ -123,7 +123,27 @@ Seed tiers (unverified):
   Gibbs-variational form J* ≥ sup_β{inf_u F_β + J_u − Ī/β}: an MI budget Ī buys at most Ī/β of
   cost reduction against the decoupled reference — a proven controller-side analogue of
   "I nats of check buys bounded optimization" (my reading).
-  Pending: Kitano 2010, Narang 2022, Russo & Zou 2016.
+  Kitano 2010 done (`papers/Kitano_2010_ViolationsRobustnessTrade-offs/`, + supplement):
+  checked "may thus hold only when design and implementation are sufficiently optimized",
+  "it is conserved only when the system is on the efficient frontier", and Bode limited to
+  "sensitivities of negative feedback circuits on a frequency axis". No formal theorem; the
+  trade-off is Pareto-frontier language.
+  Russo & Zou done (`papers/Russo_2015_MuchDoesDataExploration/`, arXiv v3, 2019 title "How
+  much does your data exploration overfit?"): checked Prop 1 (p.3, |E[φ_T − μ_T]| ≤
+  σ√(2I(T;φ)), σ-sub-Gaussian) and Theorem 2 (p.17, shifted-exponential: E[φ_T − μ_T] ≥ H(T)/2).
+  Reading for the conjecture (mine): the budget in this machinery is I(selection; noise in the
+  scores), not I(score; true quality). For BoN, I(T;φ) ≤ H(T) ≤ log n ≈ KL, so the proxy–gold
+  gap is ≤ σ√(2·KL) for sub-Gaussian noise and can grow linearly in entropy for exponential
+  tails: √KL vs linear matches the light/heavy split, and is consistent with the β check
+  failing for I(score; quality).
+  Narang done (`papers/Narang_2022_MultiplayerPerformativePredictionLearning/`, arXiv v2; JMLR
+  24(202) 2023): checked eq. (4), Assumption 2 and ρ := √Σ(β_iγ_i/α)² on the page image (p.8),
+  Theorem 1 (ρ < 1 ⇒ unique stable equilibrium, linear convergence, p.10), and the "influence on
+  the data seen by all other players" quote. n identical players ⇒ per-player sensitivity
+  allowance shrinks like 1/√n (Wasserstein terms, not information).
+- All six in. Deleted the stray `papers.md`. Wrote `papers/index.md` and
+  `papers/_reader_done.tsv`; rebuilt `papers/keymap.tsv` with the plugin's build_keymap.py.
+  Reconcile --all launched after.
   Shared-file steps (index.md, keymap, reconcile) were skipped by design; run them once all land.
 - The Kitano 2007 agent sent Q's email to the Unpaywall API in a manual curl. Cause:
   research-papers-plugin `skills/paper-retriever/SKILL.md` Option 2 step 2 says to query

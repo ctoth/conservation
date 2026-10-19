@@ -1,0 +1,22 @@
+{
+  "cite_key": "kitano2010violations",
+  "title": "Violations of robustness trade-offs",
+  "authors": [
+    "Hiroaki Kitano"
+  ],
+  "year": "2010",
+  "arxiv_id": null,
+  "doi": "10.1038/msb.2010.40",
+  "abstract": "Biological robustness is a principle that may shed light on system-level characteristics of biological systems. One intriguing aspect of the concept of biological robustness is the possible existence of intrinsic trade-offs among robustness, fragility, performance, and so on. At the same time, whether such trade-offs hold regardless of the situation or hold only under specific conditions warrants careful investigation. In this paper, we reassess this concept and argue that biological robustness may hold only when a system is sufficiently optimized and that it may not be conserved when there is room for optimization in its design. Several testable predictions and implications for cell culture experiments are presented.",
+  "url": "https://doi.org/10.1038/msb.2010.40",
+  "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC2913402.1/PMC2913402.1.pdf",
+  "supplementary_pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC2913402.1/msb201040-s1.pdf",
+  "pmcid": "PMC2913402",
+  "pmid": "20571533",
+  "document_type": "article",
+  "bibtex": "@Article{Kitano2010ViolationsOR,\n author = {H. Kitano},\n booktitle = {Molecular Systems Biology},\n journal = {Molecular Systems Biology},\n pages = {384 - 384},\n title = {Violations of robustness trade-offs},\n volume = {6},\n year = {2010}\n}\n",
+  "venue": "Molecular Systems Biology",
+  "venue_type": "journal",
+  "volume": "6",
+  "pages": "384"
+}

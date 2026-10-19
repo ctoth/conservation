@@ -1,0 +1,19 @@
+{
+  "cite_key": "kitano2007towards",
+  "title": "Towards a theory of biological robustness",
+  "authors": [
+    "Hiroaki Kitano"
+  ],
+  "year": "2007",
+  "arxiv_id": null,
+  "doi": "10.1038/msb4100179",
+  "abstract": null,
+  "url": "https://www.semanticscholar.org/paper/9894275d300ad6b633d2cdd4bafaf5827445b8a0",
+  "pdf_url": "https://www.embopress.org/doi/pdf/10.1038/msb4100179",
+  "document_type": "article",
+  "venue": "Molecular Systems Biology",
+  "venue_type": "journal",
+  "volume": "3",
+  "pages": "137",
+  "note": "Editorial; no abstract. Hand-written: fetch_paper.py --metadata-only failed (Semantic Scholar HTTP 429); fields taken from the first fetch_paper.py S2 response and the paper's title page."
+}

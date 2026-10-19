@@ -1,0 +1,16 @@
+{
+  "cite_key": "pacelli2026fundamental",
+  "title": "Fundamental Limits for Sensor-Based Control via the Gibbs Variational Principle",
+  "authors": [
+    "Vincent Pacelli",
+    "Evangelos A. Theodorou"
+  ],
+  "year": "2026",
+  "document_type": "article",
+  "venue": "IEEE Control Systems Letters",
+  "arxiv_id": "2603.18454",
+  "doi": "10.1109/LCSYS.2026.3710535",
+  "abstract": "Fundamental limits on the performance of feedback controllers are essential for benchmarking algorithms, guiding sensor selection, and certifying task feasibility -- yet few general-purpose tools exist for computing them. Existing information-theoretic approaches overestimate the information a sensor must provide by evaluating it against the uncontrolled system, producing bounds that degrade precisely when feedback is most valuable. We derive a lower bound on the minimum expected cost of any causal feedback controller under partial observations by applying the Gibbs variational principle to the joint path measure over states and observations. The bound applies to nonlinear, nonholonomic, and hybrid dynamics with unbounded costs and admits a self-consistent refinement: any good controller concentrates the state, which limits the information the sensor can extract, which tightens the bound. The resulting fixed-point equation has a unique solution computable by bisection, and we provide conditions under which the free energy minimization is provably convex, yielding a certifiably correct numerical bound. On a scalar LQG problem the self-consistent bound captures over 80% of the known optimal cost at moderate sensor noise, and on a nonlinear Dubins car tracking problem it remains informative across all noise levels where a bound using the uncontrolled state distribution is vacuous.",
+  "url": "http://arxiv.org/abs/2603.18454v3",
+  "pdf_url": "https://arxiv.org/pdf/2603.18454v3"
+}

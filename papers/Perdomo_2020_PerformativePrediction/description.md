@@ -1,0 +1,4 @@
+---
+tags: [performative-prediction, distribution-shift, strategic-classification, goodhart, fixed-point]
+---
+Formalizes predictions that change the distribution they are evaluated on as a map θ -> D(θ), assumes the map is ε-Lipschitz into Wasserstein-1 distance, and defines performative optimality (minimize risk on the induced distribution) versus performative stability (fixed point of retraining). Proves repeated risk minimization contracts with factor εβ/γ and converges linearly to a unique stable point iff-tightly when ε < γ/β, that stable points lie within 2L_z ε/γ of performative optima, and that performative risk can be concave even under all these assumptions. Gives the basic quantitative handle for Goodhart-style feedback where optimizing a model shifts its own evaluation data, though it only controls Lipschitz evaluation functions and uses the same loss for training and evaluation.

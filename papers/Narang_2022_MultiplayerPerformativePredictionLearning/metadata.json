@@ -1,0 +1,20 @@
+{
+  "cite_key": "narang2023multiplayer",
+  "title": "Multiplayer Performative Prediction: Learning in Decision-Dependent Games",
+  "authors": [
+    "Adhyyan Narang",
+    "Evan Faulkner",
+    "Dmitriy Drusvyatskiy",
+    "Maryam Fazel",
+    "Lillian J. Ratliff"
+  ],
+  "year": "2022",
+  "arxiv_id": "2201.03398",
+  "doi": null,
+  "venue": "Journal of Machine Learning Research 24(202):1-56, 2023 (journal version; notes read from arXiv v2)",
+  "document_type": "article",
+  "abstract": "Learning problems commonly exhibit an interesting feedback mechanism wherein the population data reacts to competing decision makers' actions. This paper formulates a new game theoretic framework for this phenomenon, called \"multi-player performative prediction\". We focus on two distinct solution concepts, namely (i) performatively stable equilibria and (ii) Nash equilibria of the game. The latter equilibria are arguably more informative, but can be found efficiently only when the game is monotone. We show that under mild assumptions, the performatively stable equilibria can be found efficiently by a variety of algorithms, including repeated retraining and the repeated (stochastic) gradient method. We then establish transparent sufficient conditions for strong monotonicity of the game and use them to develop algorithms for finding Nash equilibria. We investigate derivative free methods and adaptive gradient algorithms wherein each player alternates between learning a parametric description of their distribution and gradient steps on the empirical risk. Synthetic and semi-synthetic numerical experiments illustrate the results.",
+  "url": "http://arxiv.org/abs/2201.03398v2",
+  "pdf_url": "https://arxiv.org/pdf/2201.03398v2",
+  "journal_url": "https://jmlr.org/papers/v24/22-0131.html"
+}

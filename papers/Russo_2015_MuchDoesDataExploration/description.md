@@ -1,0 +1,4 @@
+---
+tags: [adaptive-data-analysis, mutual-information, selection-bias, kl-divergence, sub-gaussian]
+---
+Russo and Zou prove that the bias of any data-dependent selection T among statistics φ_i is bounded by σ·sqrt(2·I(T;φ)) when each φ_i − μ_i is σ-sub-Gaussian, using the Donsker–Varadhan variational form of KL divergence applied per selected index, with extensions to unequal variances, absolute/squared error, and sub-exponential tails (where the bound becomes linear in I). They show matching lower bounds for argmax of Gaussians and threshold selection (including bias ≥ H(T)/2 for shifted exponentials), and use the framework to analyze filtering, rank selection, LARS, FDR, and randomized (Gibbs / Gaussian-noise) exploration. For this project it is the primary source for the "I nats of information buy at most σ·sqrt(2I) of overestimation" law and for evidence that exponential-or-heavier tails break the square-root scaling.
