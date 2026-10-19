@@ -107,12 +107,27 @@ Seed tiers (unverified):
 
 ## Surprises
 
+- Step 2 retrieval (2026-10-19): six background agents, notes only, each told not to touch
+  shared collection files or commit. Kitano 2007 done: `papers/Kitano_2007_TheoryBiologicalRobustness/`;
+  five quoted conditions checked against the PDF text (all match). Kitano's ΔR = 0 needs the
+  whole/broad perturbation space, equiprobable weighting, same system optimized for different
+  subsets — same shape as Schaffer/NFL's uniform prior (my reading, for the synthesis).
+  Pending: Kitano 2010, Perdomo 2020, Narang 2022, Russo & Zou 2016, Pacelli & Theodorou 2026.
+  Shared-file steps (index.md, keymap, reconcile) were skipped by design; run them once all land.
+- The Kitano 2007 agent sent Q's email to the Unpaywall API in a manual curl. Cause:
+  research-papers-plugin `skills/paper-retriever/SKILL.md` Option 2 step 2 says to query
+  Unpaywall without naming the email (the script uses `$UNPAYWALL_EMAIL` or a placeholder).
+  Fixed the skill text in ~/code/research-papers-plugin (uncommitted; that repo's master has
+  other uncommitted WIP). Running agents told the rule by message; installed plugin 4.9.0
+  lacks the fix until updated.
+
 - An untracked `conservation-dynamics/tests/compiled_conformance.proptest-regressions` held a
   failure seed (vault=10, safe=10, spend=0, share=0, drain=1). It passes on master 1dfe715;
   committed as a regression case.
 
 ## Next step
 
-Step 2: retrieve + read notes, in the report's priority order, starting with Kitano 2007 and
-2010 (closest prior statement of the thesis) and the Tier F endogenous-channel set
-(Perdomo et al. 2020, Russo & Zou 2016, Pacelli & Theodorou 2026).
+Wait for the five pending retrieval agents; spot-check each paper's notes against its PDF;
+then run the shared-file steps (index, keymap, reconcile) once and commit `papers/`. Then
+the next retrieval batch: Kwa et al. 2024 (Catastrophic Goodhart), Coste et al. 2024, the
+rest of the report's priority list.
