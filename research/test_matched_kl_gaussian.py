@@ -77,7 +77,7 @@ class MatchedGaussianTests(unittest.TestCase):
 
     def test_best_of_n_proxy_kl_by_density_integration(self) -> None:
         for model in (Model(False), Model(True)):
-            for n in (2, 16):
+            for n in (2, 16, 10**6, 10**12, 10**24):
                 self.assertAlmostEqual(simpson_bon(model, n, divergence=True), bon_kl(n), places=9)
 
     def test_tilt_density_ratio_and_conditional_gold_are_score_only(self) -> None:
@@ -114,7 +114,7 @@ class MatchedGaussianTests(unittest.TestCase):
 
     def test_probability_bins_against_independent_density_quadrature(self) -> None:
         for model in (Model(False), Model(True)):
-            for n in (2, 16, 1024):
+            for n in (2, 16, 1024, 10**6, 10**12, 10**24):
                 with self.subTest(model=model.name, n=n):
                     estimate = model.best_of_n(n)
                     reference = simpson_bon(model, n)

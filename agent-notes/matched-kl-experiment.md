@@ -25,6 +25,15 @@ No PR, release, settings changes, or edits to existing research functionality.
 - Final focused validation: 11 tests passed in 4.365s, and all 20 experiment rows
   completed. The implementation SHA's product CI run 39370172766 was in progress
   at the first post-push check; the new research regressions were run explicitly.
+- CI run 39370319511 for 13ea78e completed successfully: Ubuntu stable/Python
+  3.13, Ubuntu Rust 1.85/Python 3.10, and Windows stable/Python 3.13 all passed.
+- Approved follow-up adds n=10^6, 10^12 and 10^24 to the existing independent
+  density quadrature gold and proxy-KL regressions for both models. The twelve
+  extra quadratures took 1.692s; all gold results were within reported bounds,
+  and maximum absolute KL error was 4.619e-14. No implementation change.
+- The expanded 11-test suite passed in 6.120s; the added cases remain in the
+  ordinary fast invocation. Only the test parameter lists, report, and this
+  task note changed in the follow-up.
 
 ## Decisions and why
 
@@ -47,6 +56,6 @@ but their full proxy marginals differ (including their third raw moments).
 
 ## Next step
 
-No implementation remains. Publish this final notes-only update normally and
-report the final commit, verified remote head, focused test results, and CI
-status in the task conversation. No additional product changes are authorized.
+Verification is complete. Publish this small regression/report/notes follow-up
+normally and report the exact verified remote head. The original requested CI
+run is successful. No implementation or product changes remain.

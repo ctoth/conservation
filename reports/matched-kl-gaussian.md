@@ -117,6 +117,16 @@ with the best-of-two closed form and a separate smooth-density Simpson
 quadrature. They also integrate best-of-n's proxy KL directly and check tilt
 density ratios and conditional-gold preservation.
 
+The fast regression suite includes independent smooth-density integrations of
+both gold and proxy KL at n=10^6, 10^12 and 10^24 in both models. These twelve
+quadratures took 1.692 seconds in a separate timing pass. All gold values lay
+inside the probability-bin bounds; the largest absolute proxy KL error was
+4.619e-14. They reuse the density quadrature rather than hard-coding reference
+answers into the implementation. These numerical cross-checks do not turn the
+floating-point enclosures into formally certified rounding bounds.
+The expanded 11-test suite passed in 6.120 seconds, so these cases remain in
+the ordinary fast invocation above rather than a separate slow suite.
+
 ## Selected finite-budget results
 
 Best-of-n gold bounds below are conservatively rounded outward. Tilt gold is a
