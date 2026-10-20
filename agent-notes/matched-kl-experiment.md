@@ -18,6 +18,13 @@ No PR, release, settings changes, or edits to existing research functionality.
   the experiment completed all 20 rows in about one second. Worst KL residual
   8.143e-12; omitted tail 2.949e-6;
   bin gap 2.000e-4; floating allowance 7.086e-11.
+- Implementation commit bd52d66833cf93eb97539c98db38ce10aa3b3389 was pushed
+  normally to origin/master and independently confirmed by ls-remote as both
+  remote HEAD and refs/heads/master. Only the four intended added files were
+  published; the primary checkout remains at e8544e7 with its old work intact.
+- Final focused validation: 11 tests passed in 4.365s, and all 20 experiment rows
+  completed. The implementation SHA's product CI run 39370172766 was in progress
+  at the first post-push check; the new research regressions were run explicitly.
 
 ## Decisions and why
 
@@ -40,7 +47,6 @@ but their full proxy marginals differ (including their third raw moments).
 
 ## Next step
 
-No implementation remains. Inspect and publish only the four intended files
-via normal HEAD:master push, and report the exact commit and remote verification
-in the task conversation. The publication starts at remote master and excludes
-the primary checkout's 15 older commits; their branch and files remain intact.
+No implementation remains. Publish this final notes-only update normally and
+report the final commit, verified remote head, focused test results, and CI
+status in the task conversation. No additional product changes are authorized.
