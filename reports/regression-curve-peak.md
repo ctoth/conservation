@@ -1,8 +1,9 @@
 # The gold peak is set by the regression curve of gold on proxy
 
 Status: **derived by hand; §1 and §3 checked numerically (see "Numeric check" below); not
-reviewed by anyone else.** Answers open questions 2, 3
-(partly), 4, 8 (partly) and 13 from `agent-notes/bode-coverage.md`, for two optimizers: the
+reviewed by anyone else.** Corrected 2026-10-21 after an outside check (§2 Q3, §3, peak KL).
+Answers open questions 2, 3 (partly), 4 and 13 from `agent-notes/bode-coverage.md` (not 8; see
+§3), for two optimizers: the
 KL-regularized tilt and best-of-n. Follows `reports/goodhart-toy.md`.
 
 ## Setup
@@ -55,19 +56,37 @@ not mutual information. Cov_π(g, r) is how it appears for the tilt. With binary
 m(t) = P(good | r = t).
 
 **Q3, heavy tails (mechanism, partly from memory).** Take r = g + noise, noise independent of g.
-If the noise has heavier tails than g (e.g. Gaussian g, Student-t noise), m is redescending:
-m(t) → E[g] as t → ∞. This is the Bayesian outlier-rejection result (Dawid 1973; O'Hagan 1979;
-cited from memory, not checked). Then a peak exists and gold eventually returns to its base mean
-(see §3: the boundary term is 0, so every gain is given back). If g has the heavier tails, m keeps
-increasing and there is no overoptimization. Which side has the heavier tail decides between
-diminishing returns and catastrophic Goodhart. Kwa et al. 2024 ("Catastrophic Goodhart", unread)
-should be checked against this.
+The first version of this paragraph said "noise heavier-tailed than g ⇒ m redescending". That is
+false: Laplace(0.5) noise is heavier-tailed than Gaussian g, yet m is non-decreasing and
+saturates at 1/b = 2 (checked numerically, see "Numeric check"). The split the grid models
+support is whether the noise is log-concave, giving three regimes for Gaussian g:
+
+| noise | m | optimization |
+|---|---|---|
+| Gaussian (log-concave, light) | linear, unbounded | gains without limit |
+| Laplace (log-concave, exponential tails) | non-decreasing, bounded (→ 1/b) | diminishing returns, nothing given back |
+| Student-t₃ (not log-concave) | redescending, m(t) → E[g] | peak, then every gain given back |
+
+Redescending m under t-noise is the Bayesian outlier-rejection result (Dawid 1973; O'Hagan 1979;
+cited from memory, not checked). "Log-concave noise ⇒ m non-decreasing for every gold law" is
+Karlin's total positivity, also from memory (see "Numeric check"). Kwa et al. 2024 ("Catastrophic
+Goodhart") is still unread. A secondhand reading of its abstract splits heavy-tailed from
+light-tailed error. Laplace error has an MGF near 0, so it counts as light-tailed, yet its gain is
+capped. Check the theorem's tail definition against this before using either split.
 
 **Q13, the KL-penalized optimum is the tilt.** max_π E_π[r] − β·KL(π ‖ p₀) is the Gibbs
 variational principle; its equality condition, "with equality if and only if P(x)/Q(x) ∝
 exp(−βℓ)" (checked, Pacelli & Theodorou p. 2, eq. GVP), gives π* ∝ p₀·e^{r/β}, i.e. λ = 1/β.
 
-## 3. A path-independent, Bode-shaped identity (Q8, partly)
+## 3. An endpoint identity, not a conservation law (Q8 stays open)
+
+**Correction (2026-10-21).** By the key fact, E_π[g] = E_π[m(R)] for every π an r-only optimizer
+reaches. So any path from p₀ to the point mass at r_max changes gold by exactly
+m(r_max) − E₀[m(R)], and the F₀(t) weighting below is just integration by parts of that
+difference. The identity constrains only the two endpoints. Bode's integral constrains every
+admissible controller at every operating point. Nothing here is an analogue of that, so this
+section does not answer Q8. The derivation is kept because the kernels it integrates are
+checked.
 
 Integrate either kernel over the whole optimization path:
 - **Tilt:** d/dλ P_λ(R > t) = Cov_λ(1{R > t}, R) = K_λ(t), and P_λ(R > t) runs from 1 − F₀(t) to 1
@@ -78,21 +97,9 @@ So for **both** optimizers, from the base distribution to the top of the proxy's
 
   g(end) − g(start) = ∫ m′(t)·F₀(t) dt = m(r_max) − E₀[m(R)].
 
-The Bode correspondence:
-
-| Bode | here |
-|---|---|
-| ln\|S(jω)\|, sensitivity at frequency ω | m′(t), gold gained per unit proxy at proxy level t |
-| dω (with Bode's weighting) | F₀(t) dt |
-| π Σ Re p_unstable | m(r_max) − E₀[m(R)]: what the proxy's top is worth above average |
-| independent of the controller (beyond the poles) | independent of the optimizer (tilt or BoN) |
-
-Waterbed reading: when the proxy's top is worth no more than average (m(r_max) ≤ E₀m, the
-heavy-tailed-noise case), every unit of gold gained where m rises is given back where m falls,
-weighted by F₀.
-
-**Caveat.** Mathematically this is integration by parts. Its content is the path independence
-and the identification of the budget term; whether that counts as a conservation law is open.
+The first version set this beside Bode's integral (m′ ↔ ln|S|, F₀ dt ↔ dω, m(r_max) − E₀m ↔
+π Σ Re p_unstable) and read it as a waterbed. That reading holds only at the endpoint, which
+light-tailed noise never reaches in practice (Numeric check, n = 10¹² row). It is withdrawn.
 
 ## Martins & Dahleh check (Q12)
 
@@ -139,9 +146,13 @@ limit is effectively unreachable.
 The Gaussian-noise rows fit a more general statement than the one in §2: log-concave noise
 gives a monotone likelihood ratio in (t, g), so m is non-decreasing for every gold law. Under
 that statement, log-concave noise means no overoptimization, whatever gold's tails are. This
-is Karlin's total-positivity result, which I'm citing from memory and have not checked. If it
-holds, the Q3 split in §2 is really about whether the noise is log-concave, not about which
-side has heavier tails.
+is Karlin's total-positivity result, which I'm citing from memory and have not checked.
+
+Laplace noise (added 2026-10-21, one-off probe through this script's `grid_model`, Gaussian
+gold, b = 0.5): m is non-decreasing on the whole grid, m(1) = 0.731, m(3) = 1.790, and m = 2.000
+from t = 6 to 30. That is the saturation value 1/b. The t₃ model in the same probe: m(3) = 1.662,
+m(6) = 0.777, m(30) = 0.134. So heavier-than-gold noise tails are not enough for
+redescending m; §2 Q3 is corrected accordingly. The Laplace model is not yet in the script.
 
 **Gold peaks.** Gold is measured relative to E₀g. BoN is swept over n = 2^k, so its peak is
 located only to a factor of 2.
@@ -150,12 +161,24 @@ located only to a factor of 2.
 |---|---|---|---|
 | toy | 0.229 | +0.70 at KL 1.204 | +0.70 at KL 1.204 |
 | Gaussian noise | 0.805 | none (monotone) | none (monotone) |
-| t₃ noise | 0.581 | +0.34 at KL 2.2 | +1.47 at KL 3.2 (n = 64) |
+| t₃ noise | 0.581 | +0.346 at KL ≈ 1.6 (λ ≈ 0.386; see below) | +1.47 at KL 3.17 (n = 64) |
 | t₃ gold | 0.560 | none (monotone) | none (monotone) |
+
+The t₃ tilt's KL at the peak is ill-conditioned. Near the peak, gold is flat to 3e-4 over
+λ ∈ [0.38, 0.41], while KL climbs from 1.43 to 2.72 as tilted mass runs to the truncation edge
+(P(r > 20) goes from 0.135 to 0.252). The script's λ step of 0.05 lands on λ = 0.40, KL 2.215. The
+truncation table's step of 0.01 lands on λ = 0.39, KL 1.785. Same model, different sweep step.
+A step of 0.0025 puts the peak at λ ≈ 0.385–0.3875, KL ≈ 1.6–1.7. Since the untruncated tilt does
+not exist (below), the tilt's peak KL for this model carries no information beyond "of order 1–2
+nats on this grid".
+
+The BoN KL values are the exact discrete KL of the selected-level law on the grid, not the
+atomless formula log n − (n−1)/n. At n = 64 they differ by 0.002 (3.1726 vs 3.1745).
 
 1. Overoptimization appears only in the redescending case, under both optimizers, as the
    monotone criterion says.
-2. The peak is again not at KL ≈ I₀: it sits 3–5× higher in every model that has one.
+2. The peak is again not at KL ≈ I₀. KL*/I₀ is 5.3 (toy), about 5.5 (t₃ BoN), and about 2.8 (t₃
+   tilt, with the conditioning caveat above).
 
 **New: the tilt does not exist under heavy-tailed noise.** A t₃ proxy has E₀[e^{λR}] = ∞ for
 every λ > 0. So the KL-penalized objective sup_π E_π r − β·KL equals β·log E₀e^{r/β} = ∞, and it
@@ -176,4 +199,7 @@ still unread.
 
 - Retrieve Dawid 1973 / O'Hagan 1979 (redescending posterior mean), Karlin (log-concave ⇒ MLR ⇒
   monotone posterior mean), and Kwa et al. 2024. Compare Kwa's claim with the tilt
-  non-existence above.
+  non-existence above and with the Laplace (bounded, monotone) regime.
+- Manheim & Garrabrant 2018: does "monotone m with slope < 1" match their regressional Goodhart,
+  and "non-monotone m" their extremal Goodhart? Suggested in an outside check from memory;
+  unchecked.

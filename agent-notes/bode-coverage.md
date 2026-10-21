@@ -121,17 +121,29 @@ vs typeset equations. 13. KL-penalized RL optimum = tilt (from memory, unchecked
 Progress (2026-10-19, `reports/regression-curve-peak.md`, derived by hand, unchecked): for tilt
 and BoN, E_π[g | r] = m(r) := E₀[g | r]; gold rate = non-negative-kernel average of m′ (tilt:
 Hoeffding kernel K_λ; BoN: uⁿ(1−u)). ⇒ Q4 peak set by init joint via m, F₀ (no scalar can do
-it); Q2 slope of m, not MI; monotone m ⇒ no overoptimization; Q3 heavy-tailed noise ⇒
+it); Q2 slope of m, not MI; monotone m ⇒ no overoptimization; Q3 non-log-concave noise (t₃) ⇒
 redescending m (Dawid 1973 / O'Hagan 1979, from memory) ⇒ gains fully returned; Q13 solved via
-Pacelli's GVP equality condition (checked); Q8 partial: g(end) − g(start) = ∫ m′F₀ dt =
-m(r_max) − E₀m for both optimizers (path-independent, Bode-shaped, integration by parts). Q12
+Pacelli's GVP equality condition (checked). Q12
 solved: Martins & Dahleh Def. 5.1 typeset p.1609, fixed f and c independent of x(0), d.
+
+Corrections (2026-10-21, from an outside check Q relayed; each re-verified by me):
+- Q3 as first written ("noise heavier-tailed than gold ⇒ redescending") is false. Laplace(0.5)
+  noise with Gaussian gold gives a non-decreasing m that saturates at 1/b = 2.000 (probe via
+  `grid_model`). There are three regimes: Gaussian (linear m), Laplace (bounded monotone),
+  t₃ (redescending). The split is log-concavity (Karlin, unchecked).
+- §3's "path-independent, Bode-shaped" identity is trivial. By the key fact, gold = E_π m(R), so
+  any path p₀ → δ_{r_max} gives m(r_max) − E₀m. It constrains endpoints only. Q8 is fully open again.
+- t₃ tilt peak "KL 2.2" vs the truncation table's "1.79" (same model): the λ sweep steps were
+  0.05 vs 0.01. Gold is flat to 3e-4 near the peak while KL climbs ~40 nats per unit λ. With a
+  0.0025 step, KL* ≈ 1.6–1.7.
+- Rejected claim from the same check: "the BoN KL column is the atomless formula". The script
+  computes the exact grid KL (3.1726 vs formula 3.1745 at n = 64).
 
 Numeric check (Q "make it so", 2026-10-19): `research/regression_curve_check.py`. §1 rates and
 §3 path identity hold to ≤1.4e-9 on the toy and three grid models (N/N, N gold + t₃ noise, t₃
 gold + N noise). The key fact is checked independently: the toy's BoN closed form, and BoN Monte
 Carlo within 4 se. m redescends under t₃ noise (peak t = 3.1) and is monotone under Gaussian
-noise. Peaks occur only in the redescending model, at KL 3–5× I₀. New findings:
+noise. Peaks occur only in the redescending model, at KL ≈ 2.8–5.5× I₀. New findings:
 - a t₃ proxy has no MGF, so the tilt / KL-penalized optimum does not exist, and the grid
   tilt's peak moves with the truncation point;
 - best-of-n never reaches the budget term under light-tailed noise.
@@ -226,6 +238,9 @@ Results are in the report's "Numeric check" section.
   committed as a regression case.
 
 ## Next step
+
+Pending Q's "make it so": add the Laplace model to `research/regression_curve_check.py` (assert
+non-decreasing m with saturation at 1/b), and use one fine λ step for both peak sweeps.
 
 Next retrieval batch: Kwa et al. 2024 (Catastrophic Goodhart; compare with the tilt
 non-existence under heavy-tailed noise), Dawid 1973, O'Hagan 1979, Karlin (log-concave ⇒
