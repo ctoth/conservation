@@ -110,8 +110,8 @@ only the input v. The channel's law is fixed. Confirms the reading in the task n
 ## Numeric check
 
 Script: `research/regression_curve_check.py` (stdlib; Q's "make it so", 2026-10-19). Run:
-`python research/regression_curve_check.py` (~7 s). Models: the toy (ε = 1e-6), and r = g + noise
-on a grid (g ∈ [−8, 8] step 0.05, r ∈ [−30, 30] step 0.1) for three gold/noise pairs. A grid model
+`python research/regression_curve_check.py` (~13 s). Models: the toy (ε = 1e-6), and r = g + noise
+on a grid (g ∈ [−8, 8] step 0.05, r ∈ [−30, 30] step 0.1) for four gold/noise pairs. A grid model
 is a discrete model, so the identities should hold to rounding.
 
 **§1 and §3 hold.** Worst absolute gaps over λ ∈ {0.01, 0.3, 1, 3, 10} and n ∈ {1, 2, 5, 20, 100, 1000}:
@@ -122,9 +122,10 @@ is a discrete model, so the identities should hold to rounding.
 | N(0,1) gold, N(0, 0.5) noise | 2.3e-11 | 2.5e-16 | 4.5e-12 | +7.998 | +7.998 |
 | N(0,1) gold, t₃(0.5) noise | 1.4e-9 | 8.6e-17 | 3.7e-11 | +0.134 | +0.134 |
 | t₃(1) gold, N(0,1) noise | 7.0e-10 | 3.2e-16 | 3.3e-11 | +7.974 | +7.974 |
+| N(0,1) gold, Laplace(0.5) noise | 1.2e-11 | 5.7e-17 | 1.1e-8 | +2.000 | +2.000 |
 
-Best-of-n at n = 10¹² reaches the budget for the toy and the t₃-noise model but not for the
-two Gaussian-noise models (6.36, 7.85). There the top levels carry mass ~10⁻³⁰⁰, so no
+Best-of-n at n = 10¹² reaches the budget for the toy, the t₃-noise and the Laplace-noise models,
+but not for the two Gaussian-noise models (6.36, 7.85). There the top levels carry mass ~10⁻³⁰⁰, so no
 practical n reaches them. The identity is a limit statement, and with light-tailed noise the
 limit is effectively unreachable.
 
@@ -132,7 +133,7 @@ limit is effectively unreachable.
 - Toy: best-of-n via m matches the closed form P(best is good) = (1−ε)ⁿ − (0.7−ε)ⁿ for
   n from 1 to 10⁷.
 - Grid models: Monte Carlo best-of-n sampled from the joint (20000 trials, n ∈ {1, 4, 16, 64})
-  is within 4 standard errors of the m formula in all 12 cases. The largest deviation is
+  is within 4 standard errors of the m formula in all 16 cases. The largest deviation is
   2.4 se (t₃ gold, n = 64).
 
 **Shape of m (§2).**
@@ -148,11 +149,11 @@ gives a monotone likelihood ratio in (t, g), so m is non-decreasing for every go
 that statement, log-concave noise means no overoptimization, whatever gold's tails are. This
 is Karlin's total-positivity result, which I'm citing from memory and have not checked.
 
-Laplace noise (added 2026-10-21, one-off probe through this script's `grid_model`, Gaussian
-gold, b = 0.5): m is non-decreasing on the whole grid, m(1) = 0.731, m(3) = 1.790, and m = 2.000
-from t = 6 to 30. That is the saturation value 1/b. The t₃ model in the same probe: m(3) = 1.662,
-m(6) = 0.777, m(30) = 0.134. So heavier-than-gold noise tails are not enough for
-redescending m; §2 Q3 is corrected accordingly. The Laplace model is not yet in the script.
+- Gaussian gold with Laplace(0.5) noise (added 2026-10-21): m is non-decreasing on the whole
+  grid, with m(1) = 0.731, m(2) = 1.365, m(4) = 1.965, and m = 2.000 from t = 8 to 30. That is the
+  saturation value 1/b (the posterior tends to φ(g)·e^{g/b}, i.e. N(1/b, 1)). The script asserts
+  that m is non-decreasing and that |m − 1/b| < 1e-3 for t ≥ 6. So heavier-than-gold noise tails
+  are not enough for redescending m; §2 Q3 is corrected accordingly.
 
 **Gold peaks.** Gold is measured relative to E₀g. BoN is swept over n = 2^k, so its peak is
 located only to a factor of 2.
@@ -161,24 +162,24 @@ located only to a factor of 2.
 |---|---|---|---|
 | toy | 0.229 | +0.70 at KL 1.204 | +0.70 at KL 1.204 |
 | Gaussian noise | 0.805 | none (monotone) | none (monotone) |
-| t₃ noise | 0.581 | +0.346 at KL ≈ 1.6 (λ ≈ 0.386; see below) | +1.47 at KL 3.17 (n = 64) |
+| t₃ noise | 0.581 | +0.346 at KL 1.60 (λ = 0.385) | +1.47 at KL 3.17 (n = 64) |
 | t₃ gold | 0.560 | none (monotone) | none (monotone) |
+| Laplace noise | 0.621 | none (monotone, → +2.000) | none (monotone, → +2.000) |
 
 The t₃ tilt's KL at the peak is ill-conditioned. Near the peak, gold is flat to 3e-4 over
 λ ∈ [0.38, 0.41], while KL climbs from 1.43 to 2.72 as tilted mass runs to the truncation edge
-(P(r > 20) goes from 0.135 to 0.252). The script's λ step of 0.05 lands on λ = 0.40, KL 2.215. The
-truncation table's step of 0.01 lands on λ = 0.39, KL 1.785. Same model, different sweep step.
-A step of 0.0025 puts the peak at λ ≈ 0.385–0.3875, KL ≈ 1.6–1.7. Since the untruncated tilt does
-not exist (below), the tilt's peak KL for this model carries no information beyond "of order 1–2
-nats on this grid".
+(P(r > 20) goes from 0.135 to 0.252). An earlier version swept λ in steps of 0.05 here and 0.01
+in the truncation table, and reported KL 2.2 and 1.79 for the same model. Both sweeps now use
+step 0.0025 for λ < 4 (`GRID_LAMS`) and agree: λ = 0.385, KL 1.598. Since the untruncated tilt
+does not exist (below), this peak KL describes the truncated grid, not the model.
 
 The BoN KL values are the exact discrete KL of the selected-level law on the grid, not the
 atomless formula log n − (n−1)/n. At n = 64 they differ by 0.002 (3.1726 vs 3.1745).
 
 1. Overoptimization appears only in the redescending case, under both optimizers, as the
    monotone criterion says.
-2. The peak is again not at KL ≈ I₀. KL*/I₀ is 5.3 (toy), about 5.5 (t₃ BoN), and about 2.8 (t₃
-   tilt, with the conditioning caveat above).
+2. The peak is again not at KL ≈ I₀. KL*/I₀ is 5.3 (toy), 5.5 (t₃ BoN), and 2.8 (t₃ tilt, with
+   the conditioning caveat above).
 
 **New: the tilt does not exist under heavy-tailed noise.** A t₃ proxy has E₀[e^{λR}] = ∞ for
 every λ > 0. So the KL-penalized objective sup_π E_π r − β·KL equals β·log E₀e^{r/β} = ∞, and it
@@ -187,9 +188,9 @@ the truncation point:
 
 | r_max | λ at peak | gold at peak | KL at peak |
 |---|---|---|---|
-| 10 | 0.93 | +0.77 | 2.47 |
-| 20 | 0.53 | +0.46 | 1.87 |
-| 30 | 0.39 | +0.35 | 1.79 |
+| 10 | 0.925 | +0.77 | 2.42 |
+| 20 | 0.5275 | +0.46 | 1.81 |
+| 30 | 0.385 | +0.35 | 1.60 |
 
 Best-of-n stays well defined. So with heavy-tailed noise, the "tilt" half of §1–§3 describes a
 truncated model, not the real one. This looks like the setting of Kwa et al. 2024, which is

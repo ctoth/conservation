@@ -36,6 +36,15 @@ def student_t_pdf(nu: float, scale: float) -> Pdf:
     return lambda x: c * (1 + (x / scale) ** 2 / nu) ** (-(nu + 1) / 2)
 
 
+def laplace_pdf(b: float) -> Pdf:
+    return lambda x: math.exp(-abs(x) / b) / (2 * b)
+
+
+# Tilt sweep for the grid models: fine below lam = 4, where the t3-noise peak sits and its KL
+# moves ~40 nats per unit lam (reports/regression-curve-peak.md), coarse above.
+GRID_LAMS = [0.0025 * i for i in range(1600)] + [4 + 0.05 * i for i in range(321)]
+
+
 def toy(eps: float = 1e-6) -> Model:
     # reports/goodhart-toy.md: bad (r 0.2, gold 0), good (r 0.9, gold 1), exploit (r 1, gold 0).
     return Model("toy eps=1e-6", [0.2, 0.9, 1.0], [0.7 - eps, 0.3, eps], [0.0, 1.0, 0.0])
@@ -206,6 +215,7 @@ def main() -> None:
         grid_model("N(0,1) gold, N(0,.5) noise", normal_pdf(1.0), normal_pdf(0.5)),
         grid_model("N(0,1) gold, t3(.5) noise", normal_pdf(1.0), student_t_pdf(3, 0.5)),
         grid_model("t3(1) gold, N(0,1) noise", student_t_pdf(3, 1.0), normal_pdf(1.0)),
+        grid_model("N(0,1) gold, Laplace(.5) noise", normal_pdf(1.0), laplace_pdf(0.5)),
     ]
     print("Section 1 and 3 identities (worst absolute gap)")
     print(f"{'model':<30} {'tilt rate':<10} {'BoN rate':<10} {'tilt path':<10} "
@@ -254,12 +264,17 @@ def main() -> None:
     heavy = models[2]
     top = max(range(len(heavy.t)), key=lambda j: heavy.m[j])
     assert 0 < top < len(heavy.t) - 1 and all(d <= 1e-12 for d in dm(heavy)[top:])
+    # Laplace noise is heavier-tailed than the gold but log-concave: m is non-decreasing and
+    # saturates at 1/b, since the posterior tends to phi(g) e^{g/b}, i.e. N(1/b, 1).
+    lap = models[4]
+    assert all(d >= -1e-12 for d in dm(lap))
+    assert all(abs(m - 1 / 0.5) < 1e-3 for m, t in zip(lap.m, lap.t) if t >= 6)
 
     print()
     print("Gold peaks (gold measured relative to E0 g)")
     for md in models:
         base = dot(md.p0, md.m)
-        lams = [0.05 * i for i in range(401)] if not md.name.startswith("toy") else [0.1 * i for i in range(3001)]
+        lams = GRID_LAMS if not md.name.startswith("toy") else [0.1 * i for i in range(3001)]
         pis = [tilt(md, lam) for lam in lams]
         ns = [2 ** k for k in range(41)]
         bons = [bon(md, n) for n in ns]
@@ -271,7 +286,7 @@ def main() -> None:
     print("Truncation dependence of the tilt, t3 noise (the untruncated tilt does not exist)")
     for r_max in (10.0, 20.0, 30.0):
         md = grid_model("", normal_pdf(1.0), student_t_pdf(3, 0.5), r_max=r_max)
-        lams = [0.01 * i for i in range(401)]
+        lams = GRID_LAMS
         pis = [tilt(md, lam) for lam in lams]
         print(f"  r_max={r_max:<5g} " + sweep_peak([dot(p, md.m) for p in pis], [kl(p, md.p0) for p in pis], lams))
 

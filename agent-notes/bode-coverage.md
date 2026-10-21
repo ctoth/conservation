@@ -135,7 +135,7 @@ Corrections (2026-10-21, from an outside check Q relayed; each re-verified by me
   any path p₀ → δ_{r_max} gives m(r_max) − E₀m. It constrains endpoints only. Q8 is fully open again.
 - t₃ tilt peak "KL 2.2" vs the truncation table's "1.79" (same model): the λ sweep steps were
   0.05 vs 0.01. Gold is flat to 3e-4 near the peak while KL climbs ~40 nats per unit λ. With a
-  0.0025 step, KL* ≈ 1.6–1.7.
+  0.0025 step, KL* = 1.598.
 - Rejected claim from the same check: "the BoN KL column is the atomless formula". The script
   computes the exact grid KL (3.1726 vs formula 3.1745 at n = 64).
 
@@ -239,8 +239,10 @@ Results are in the report's "Numeric check" section.
 
 ## Next step
 
-Pending Q's "make it so": add the Laplace model to `research/regression_curve_check.py` (assert
-non-decreasing m with saturation at 1/b), and use one fine λ step for both peak sweeps.
+Done (Q "make it so", 2026-10-21): the Laplace model is in `research/regression_curve_check.py`,
+which asserts non-decreasing m and |m − 1/b| < 1e-3 for t ≥ 6. Both tilt sweeps now use
+`GRID_LAMS` (step 0.0025 below λ = 4). The t₃ peak is at λ = 0.385, KL 1.598 in both tables.
+BoN at n = 10¹² reaches the Laplace budget (+2.000).
 
 Next retrieval batch: Kwa et al. 2024 (Catastrophic Goodhart; compare with the tilt
 non-existence under heavy-tailed noise), Dawid 1973, O'Hagan 1979, Karlin (log-concave ⇒
