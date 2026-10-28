@@ -233,4 +233,4 @@ require exactly one wheel there. After building, install it with `uv pip install
 --no-deps <wheel>` and rerun pytest with `--no-sync` to exercise the installed
 artifact. The package test checks the actual native module, version and typing
 files. CI tests Rust 1.85 compatibility and uses stable Rust for formatting/lint
-policy; it covers Python 3.10/3.13, Linux and Windows.
+policy; it covers Python 3.10/3.15, Linux and Windows.
