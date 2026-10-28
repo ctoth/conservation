@@ -15,7 +15,7 @@ num-traits.workspace = true
 
 [dev-dependencies]
 conservation-test-kinds = { path = "../conservation-test-kinds" }
-criterion = "0.5"
+criterion = "0.7"
 num-bigint.workspace = true
 proptest.workspace = true
 
